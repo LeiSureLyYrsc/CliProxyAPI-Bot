@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Virtual env / uv
+.venv/
+venv/
+ENV/
+
+# Caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# NoneBot secrets (keep the example)
+.env
+.env.*
+!.env.example
+
+# Runtime data (aliases, etc.)
+data/
+
+# Logs / OS / IDE
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

@@ -1,0 +1,28 @@
+[project]
+name = "CPA-Plugin"
+version = "0.1.0"
+description = "CPA-Plugin"
+readme = "README.md"
+requires-python = ">=3.10, <4.0"
+dependencies = [
+    "nonebot2[aiohttp,fastapi,httpx,websockets]>=2.5.0",
+    "nonebot-adapter-onebot>=2.4.6",
+    "nonebot-plugin-alconna>=0.62.1",
+    "playwright>=1.49.0",
+    "nonebot-adapter-telegram>=0.1.0b20",
+]
+
+[tool.nonebot]
+plugin_dirs = ["plugins"]
+builtin_plugins = []
+
+[tool.nonebot.adapters]
+nonebot-adapter-onebot = [
+    { name = "OneBot V11", module_name = "nonebot.adapters.onebot.v11" }
+]
+"@local" = []
+nonebot-adapter-telegram = [{name = "Telegram", module_name = "nonebot.adapters.telegram"}]
+
+[tool.nonebot.plugins]
+"@local" = []
+nonebot-plugin-alconna = ["nonebot_plugin_alconna"]
