@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import re
 from typing import Any
+
+_CALLBACK_URL = re.compile(r"https?://[^\s<>\"']+", re.I)
 
 
 def mask_secret(value: str, keep: int = 4) -> str:
@@ -124,13 +127,30 @@ def format_auth_line(file: dict[str, Any]) -> str:
     return f"[{provider}] {display_name(file, public=True)}  {status}  idx={short_index(file)}{flag_text}"
 
 
-def format_auth_list(files: list[dict[str, Any]], *, limit: int = 30) -> str:
-    if not files:
-        return "没有凭证。"
-    visible = files[:limit]
-    lines = [format_auth_line(file) for file in visible]
-    if len(files) > limit:
-        lines.append(f"... 另有 {len(files) - limit} 条未显示，请加 provider 过滤或用 show 精确查询")
+def visible_auth_files(files: list[dict[str, Any]], *, include_disabled: bool = False) -> list[dict[str, Any]]:
+    if include_disabled:
+        return list(files)
+    return [item for item in files if not item.get("disabled")]
+
+
+def format_auth_list(
+    files: list[dict[str, Any]],
+    *,
+    limit: int = 30,
+    include_disabled: bool = False,
+    empty: str = "",
+) -> str:
+    visible = visible_auth_files(files, include_disabled=include_disabled)
+    if not visible:
+        return empty or (
+            "没有启用中的凭证。查看已禁用账号：cpa auth list --disabled"
+            if files
+            else "没有凭证。"
+        )
+    shown = visible[:limit]
+    lines = [format_auth_line(file) for file in shown]
+    if len(visible) > limit:
+        lines.append(f"... 另有 {len(visible) - limit} 条未显示，请加 provider 过滤或用 show 精确查询")
     return "\n".join(lines)
 
 
@@ -200,19 +220,48 @@ def format_login_prompt(provider: str, payload: dict[str, Any]) -> str:
     lines = [f"[{provider}] 请在浏览器完成授权。"]
     if url:
         lines.append(url)
-    if payload.get("flow") == "device" or payload.get("user_code"):
+    device = payload.get("flow") == "device" or payload.get("user_code")
+    if device:
         if payload.get("user_code"):
             lines.append(f"设备码：{payload['user_code']}")
         if payload.get("expires_in"):
             lines.append(f"有效期约 {payload['expires_in']} 秒")
-    lines.append("完成后我会自动通知。取消：cpa login cancel")
+        lines.append("完成后我会自动通知。取消：cpa login cancel")
+        return "\n".join(lines)
+    lines.append("授权完成后，把浏览器地址栏的完整回调链接发到当前聊天（localhost 也可以）。")
+    lines.append("或发送：cpa login callback <回调链接>")
+    lines.append("取消：cpa login cancel")
     return "\n".join(lines)
+
+
+def looks_like_oauth_callback(text: str) -> bool:
+    raw = (text or "").strip()
+    if not raw:
+        return False
+    lowered = raw.lower()
+    if "oauth-callback" in lowered:
+        return True
+    if "code=" in lowered and ("state=" in lowered or "localhost" in lowered or "127.0.0.1" in lowered):
+        return True
+    return False
+
+
+def extract_oauth_callback_url(text: str) -> str:
+    raw = (text or "").strip()
+    if not raw:
+        return ""
+    match = _CALLBACK_URL.search(raw)
+    if match:
+        return match.group(0).rstrip(")>.,;\"'")
+    if looks_like_oauth_callback(raw) and "://" in raw:
+        return raw.split()[0].rstrip(")>.,;\"'")
+    return ""
 
 
 def format_ambiguous(query: str, files: list[dict[str, Any]]) -> str:
     return (
         f"「{query}」匹配到多个凭证，请用更精确的名称或 auth_index：\n"
-        f"{format_auth_list(files)}"
+        f"{format_auth_list(files, include_disabled=True)}"
     )
 
 

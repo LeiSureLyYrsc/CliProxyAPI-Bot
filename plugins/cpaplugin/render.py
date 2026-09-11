@@ -13,7 +13,9 @@ from .quota import (
     PlatformQuota,
     QuotaBoard,
     QuotaWindow,
+    format_reset_zh,
     platform_total_chips,
+    sort_windows,
 )
 
 CARDS_PER_IMAGE = 8
@@ -168,16 +170,17 @@ def _bar_html(window: QuotaWindow) -> str:
         remain = max(0.0, 100.0 - used)
     width = 0.0 if remain is None else max(0.0, min(100.0, remain))
     if remain is not None:
-        value = f"{remain:.0f}% remaining"
+        value = f"还剩 {remain:.0f}%"
     elif used is not None:
-        value = f"Used {used:.0f}%"
+        value = f"已用 {used:.0f}%"
     elif window.remaining is not None and window.limit is not None:
         value = f"{window.remaining:.0f}/{window.limit:.0f}"
     else:
-        value = "Quota available"
+        value = "额度可用"
     reset = ""
-    if window.reset_label and window.reset_label != "-":
-        reset = f'<div class="reset">Refreshes in {html.escape(window.reset_label)}</div>'
+    zh_reset = format_reset_zh(window.reset_label)
+    if zh_reset:
+        reset = f'<div class="reset">{html.escape(zh_reset)}</div>'
     shift = 100.0 - width
     return (
         f'<div class="bar-row"><div class="bar-meta">'
@@ -198,7 +201,7 @@ def _grouped_windows(windows: list[QuotaWindow]) -> list[tuple[str, list[QuotaWi
             grouped[key] = []
             order.append(key)
         grouped[key].append(window)
-    return [(_GROUP_TITLES.get(key, key), grouped[key]) for key in order]
+    return [(_GROUP_TITLES.get(key, key), sort_windows(grouped[key])) for key in order]
 
 
 def _group_key(window_id: str) -> str:

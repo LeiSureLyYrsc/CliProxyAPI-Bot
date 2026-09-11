@@ -11,7 +11,7 @@ from nonebot_plugin_alconna import Target, UniMessage, get_target
 
 from .client import CPAError, get_client
 from .config import Config
-from .format import format_login_prompt
+from .format import extract_oauth_callback_url, format_login_prompt
 
 BUILTIN_AUTH_URLS: dict[str, str] = {
     "claude": "/anthropic-auth-url",
@@ -110,6 +110,10 @@ async def start_login(bot: Bot, event: Event, provider: str, payload: dict[str, 
     return target
 
 
+def has_pending(bot: Bot, event: Event) -> bool:
+    return session_key(bot, event) in _pending
+
+
 async def cancel_login(bot: Bot, event: Event) -> str:
     key = session_key(bot, event)
     pending = _pending.get(key)
@@ -118,6 +122,32 @@ async def cancel_login(bot: Bot, event: Event) -> str:
     provider = pending.provider
     await cancel_local(key, notify=False)
     return f"已取消 [{provider}] 登录。"
+
+
+async def submit_callback(bot: Bot, event: Event, text: str) -> str:
+    pending = _pending.get(session_key(bot, event))
+    if pending is None:
+        raise CPAError("当前没有进行中的登录。请先发送 cpa login <渠道>。")
+    url = extract_oauth_callback_url(text)
+    if not url:
+        raise CPAError("没有从消息里解析到回调链接。请发送浏览器地址栏的完整 URL。")
+    logger.info("CPA oauth callback received for [{}] (url redacted)", pending.provider)
+    try:
+        await get_client().oauth_callback(redirect_url=url, provider=pending.provider, state=pending.state)
+    except CPAError as exc:
+        raise CPAError(f"提交回调失败：{exc}") from exc
+    try:
+        status = await get_client().auth_status(pending.state)
+    except CPAError as exc:
+        return f"回调已提交，但查询登录状态失败：{exc}"
+    state = str(status.get("status") or "")
+    if state == "ok":
+        await cancel_local(pending.key, notify=False)
+        return f"[{pending.provider}] 登录成功，凭证已写入 CPA。"
+    if state == "wait":
+        return f"[{pending.provider}] 回调已提交，仍在等待 CPA 完成。可继续等待或 cpa login cancel。"
+    error = status.get("error") or "未知错误"
+    return f"[{pending.provider}] 登录失败：{error}"
 
 
 async def cancel_all() -> None:

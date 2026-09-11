@@ -23,6 +23,9 @@ _API_CALL_ALLOWLIST: tuple[tuple[str, str], ...] = (
     ("daily-cloudcode-pa.sandbox.googleapis.com", "/v1internal:retrieveUserQuotaSummary"),
     ("cloudcode-pa.googleapis.com", "/v1internal:retrieveUserQuotaSummary"),
     ("cloudcode-pa.googleapis.com", "/v1internal:retrieveUserQuota"),
+    ("daily-cloudcode-pa.googleapis.com", "/v1internal:loadCodeAssist"),
+    ("daily-cloudcode-pa.sandbox.googleapis.com", "/v1internal:loadCodeAssist"),
+    ("cloudcode-pa.googleapis.com", "/v1internal:loadCodeAssist"),
 )
 
 
@@ -207,6 +210,28 @@ class ManagementClient:
 
     async def cancel_oauth(self, state: str) -> Any:
         return await self.request_json("DELETE", "/oauth-session", params={"state": state})
+
+    async def oauth_callback(
+        self,
+        *,
+        redirect_url: str | None = None,
+        provider: str | None = None,
+        state: str | None = None,
+        code: str | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {}
+        if redirect_url:
+            body["redirect_url"] = redirect_url
+        if provider:
+            body["provider"] = provider
+        if state:
+            body["state"] = state
+        if code:
+            body["code"] = code
+        if not body:
+            raise CPAError("回调内容为空。")
+        data = await self.request_json("POST", "/oauth-callback", json=body)
+        return data if isinstance(data, dict) else {}
 
     async def api_call(
         self,

@@ -5,7 +5,9 @@ from typing import Any
 from arclet.alconna import Alconna, Args, CommandMeta, Option, Subcommand, store_true
 from nonebot import get_plugin_config
 from nonebot.adapters import Bot, Event
+from nonebot.message import event_preprocessor
 from nonebot.permission import SUPERUSER, Permission
+from nonebot.exception import IgnoredException
 from nonebot_plugin_alconna import Arparma, Image, Query, UniMessage, on_alconna
 
 from .client import CPAError, get_client
@@ -21,9 +23,17 @@ from .format import (
     format_quota_list,
     format_reset_result,
     is_cooling,
+    looks_like_oauth_callback,
     match_auth,
 )
-from .oauth import cancel_login, discover_auth_urls, resolve_auth_path, start_login
+from .oauth import (
+    cancel_login,
+    discover_auth_urls,
+    has_pending,
+    resolve_auth_path,
+    start_login,
+    submit_callback,
+)
 from .quota import (
     PLATFORM_TITLES,
     QuotaBoard,
@@ -49,6 +59,32 @@ async def _extra_admin(event: Event) -> bool:
 CPA_ADMIN = SUPERUSER | Permission(_extra_admin)
 
 
+@event_preprocessor
+async def _capture_oauth_callback(bot: Bot, event: Event) -> None:
+    if not has_pending(bot, event):
+        return
+    try:
+        if not await CPA_ADMIN(bot, event):
+            return
+    except Exception:
+        return
+    try:
+        text = event.get_plaintext().strip()
+    except Exception:
+        return
+    if not text or text.lower().startswith(("cpa ", "/cpa ")):
+        return
+    if not looks_like_oauth_callback(text):
+        return
+    try:
+        message = await submit_callback(bot, event, text)
+    except CPAError as exc:
+        await UniMessage(str(exc)).send()
+        raise IgnoredException("cpa oauth callback") from exc
+    await UniMessage(message).send()
+    raise IgnoredException("cpa oauth callback")
+
+
 def _text(query: Query[str]) -> str:
     return str(query.result).strip()
 
@@ -67,7 +103,12 @@ cpa = on_alconna(
         Subcommand("status", help_text="探活与凭证概览"),
         Subcommand(
             "auth",
-            Subcommand("list", Args["provider?", str], help_text="凭证摘要列表"),
+            Subcommand(
+                "list",
+                Args["provider?", str],
+                Option("--disabled", action=store_true, dest="disabled", help_text="包含已禁用账号"),
+                help_text="凭证摘要列表",
+            ),
             Subcommand("show", Args["query", str], help_text="凭证详情"),
             Subcommand("on|enable", Args["query", str], dest="on", help_text="启用凭证"),
             Subcommand("off|disable", Args["query", str], dest="off", help_text="禁用凭证"),
@@ -82,8 +123,16 @@ cpa = on_alconna(
         ),
         Subcommand(
             "alias",
-            Subcommand("list", help_text="列出账号别名"),
-            Subcommand("set", Args["query", str]["alias", str], help_text="为账号设置显示别名"),
+            Subcommand(
+                "list",
+                Option("--disabled", action=store_true, dest="disabled", help_text="包含已禁用账号"),
+                help_text="列出账号别名",
+            ),
+            Subcommand(
+                "set",
+                Args["a", str]["b", str]["c?", str],
+                help_text="设置别名：cpa alias set <渠道> <邮箱> <别名>",
+            ),
             Subcommand("del|rm|delete", Args["query", str], dest="delete", help_text="删除别名"),
             help_text="账号显示别名，避免聊天里出现邮箱",
         ),
@@ -99,13 +148,14 @@ cpa = on_alconna(
         Subcommand(
             "login",
             Subcommand("cancel", help_text="取消进行中的登录"),
+            Subcommand("callback", Args["url", str], help_text="提交浏览器回调链接"),
             Args["provider?", str],
             help_text="OAuth / 设备码登录",
         ),
         meta=CommandMeta(
             description="CliProxyAPI 管理（仅管理员）",
             usage="发送 cpa 或 /cpa 查看完整帮助",
-            example="cpa status\ncpa auth list claude\ncpa alias set user@example.com AG-1\ncpa quota\ncpa quota antigravity\ncpa quota --fresh\ncpa quota --text\ncpa login claude",
+            example="cpa status\ncpa auth list claude\ncpa alias set antigravity user@example.com AG-1\ncpa quota\ncpa quota antigravity\ncpa quota --fresh\ncpa quota --text\ncpa login claude",
         ),
     ),
     permission=CPA_ADMIN,
@@ -140,8 +190,9 @@ def _cpa_help_text(providers: str) -> str:
             "    版本、凭证 ready / 禁用 / 冷却计数。不回传配置正文。",
             "",
             "【凭证】",
-            "  cpa auth list [渠道]",
-            "    摘要列表。渠道如 claude / codex / antigravity / kimi / xai。",
+            "  cpa auth list [渠道] [--disabled]",
+            "    摘要列表。默认隐藏已禁用账号；加 --disabled 才显示。",
+            "    渠道如 claude / codex / antigravity / kimi / xai。",
             "  cpa auth show <查询词>",
             "    单条详情（含原始邮箱，仅管理员对照用）。",
             "  cpa auth on|off <查询词>",
@@ -152,9 +203,11 @@ def _cpa_help_text(providers: str) -> str:
             "    删除磁盘凭证。没有 --yes 只预告，不会真删。",
             "",
             "【别名】聊天和额度图默认不显示邮箱；未设别名时为「渠道-短索引」。",
-            "  cpa alias list",
-            "  cpa alias set <查询词> <别名>",
-            "    例：cpa alias set user@example.com AG-1",
+            "  cpa alias list [--disabled]",
+            "    默认隐藏已禁用账号的别名。",
+            "  cpa alias set <渠道> <邮箱> <别名>",
+            "    例：cpa alias set antigravity user@example.com AG-1",
+            "    同邮箱跨渠道必须带渠道，避免串号。",
             "  cpa alias del <查询词>",
             "",
             "【额度】按平台出合并卡片图；一个平台一张。",
@@ -173,6 +226,8 @@ def _cpa_help_text(providers: str) -> str:
             "【登录】授权链接优先私聊。不要加 is_webui。",
             f"  可用渠道：{providers}",
             "  cpa login <渠道>     例：cpa login claude",
+            "    浏览器会跳到 localhost。完成后把地址栏完整回调链接发到当前聊天。",
+            "  cpa login callback <回调链接>",
             "  cpa login cancel     取消进行中的登录",
             "",
             "【查询词】邮箱、文件名、label、别名、auth_index（可只写前缀）。",
@@ -199,17 +254,22 @@ async def cpa_status() -> None:
 
 
 @cpa.assign("auth.list")
-async def auth_list(provider: Query[str] = Query("auth.list.provider")) -> None:
+async def auth_list(
+    arp: Arparma,
+    provider: Query[str] = Query("auth.list.provider"),
+) -> None:
     try:
         files = await get_client().list_auth_files()
     except CPAError as exc:
         await UniMessage(str(exc)).finish()
+        return
     if provider.available:
         needle = provider.result.strip().lower()
         files = [item for item in files if str(item.get("provider") or "").lower() == needle]
         if not files:
             await UniMessage(f"没有 provider={provider.result} 的凭证。").finish()
-    await UniMessage(format_auth_list(files)).finish()
+            return
+    await UniMessage(format_auth_list(files, include_disabled=bool(arp.find("auth.list.disabled")))).finish()
 
 
 @cpa.assign("auth.show")
@@ -260,20 +320,37 @@ async def auth_delete(arp: Arparma, query: Query[str] = Query("auth.delete.query
 
 
 @cpa.assign("alias.list")
-async def alias_list() -> None:
-    await UniMessage(format_alias_list()).finish()
+async def alias_list(arp: Arparma) -> None:
+    try:
+        files = await get_client().list_auth_files()
+    except CPAError as exc:
+        await UniMessage(str(exc)).finish()
+        return
+    await UniMessage(
+        format_alias_list(files, include_disabled=bool(arp.find("alias.list.disabled")))
+    ).finish()
 
 
 @cpa.assign("alias.set")
 async def alias_set(
-    query: Query[str] = Query("alias.set.query"),
-    alias: Query[str] = Query("alias.set.alias"),
+    a: Query[str] = Query("alias.set.a"),
+    b: Query[str] = Query("alias.set.b"),
+    c: Query[str] = Query("alias.set.c"),
 ) -> None:
-    file = await _require_one(_text(query))
+    first = _text(a)
+    second = _text(b)
+    third = _text(c) if c.available else ""
+    if third:
+        file = await _require_platform_account(first, second)
+        alias = third
+    else:
+        file = await _require_one(first)
+        alias = second
     try:
-        name = set_alias(file, _text(alias))
+        name = set_alias(file, alias)
     except ValueError as exc:
         await UniMessage(str(exc)).finish()
+        return
     clear_quota_cache()
     await UniMessage(
         f"已设置别名「{name}」。\n"
@@ -380,15 +457,27 @@ async def login_cancel(bot: Bot, event: Event) -> None:
         message = await cancel_login(bot, event)
     except CPAError as exc:
         await UniMessage(str(exc)).finish()
+        return
     await UniMessage(message).finish()
 
 
-@cpa.assign("login", additional=_without("login.cancel"))
+@cpa.assign("login.callback")
+async def login_callback(bot: Bot, event: Event, url: Query[str] = Query("login.callback.url")) -> None:
+    try:
+        message = await submit_callback(bot, event, _text(url))
+    except CPAError as exc:
+        await UniMessage(str(exc)).finish()
+        return
+    await UniMessage(message).finish()
+
+
+@cpa.assign("login", additional=_without("login.cancel", "login.callback"))
 async def login_start(bot: Bot, event: Event, provider: Query[str] = Query("login.provider")) -> None:
     if not provider.available:
         mapping = await discover_auth_urls()
         known = ", ".join(sorted(set(mapping)))
         await UniMessage(f"用法：cpa login <渠道>\n可用渠道：{known or '（无法获取）'}").finish()
+        return
     try:
         canonical, path = await resolve_auth_path(_text(provider))
         payload = await get_client().start_login(path)
@@ -426,11 +515,38 @@ async def _require_one(query: str) -> dict[str, Any]:
         files = await _lookup(query)
     except CPAError as exc:
         await UniMessage(str(exc)).finish()
+        raise
     if not files:
         await UniMessage(f"没有找到凭证：{query}").finish()
+        raise CPAError(f"没有找到凭证：{query}")
     if len(files) > 1:
         await UniMessage(format_ambiguous(query, files)).finish()
+        raise CPAError("匹配到多个凭证")
     return files[0]
+
+
+async def _require_platform_account(provider: str, query: str) -> dict[str, Any]:
+    platform = normalize_platform(provider)
+    if not platform:
+        await UniMessage(
+            f"未知渠道「{provider}」。用法：cpa alias set <渠道> <邮箱> <别名>\n"
+            "渠道如：claude / codex / antigravity / kimi / xai"
+        ).finish()
+        raise CPAError(f"未知渠道：{provider}")
+    try:
+        files = await get_client().list_auth_files()
+    except CPAError as exc:
+        await UniMessage(str(exc)).finish()
+        raise
+    scoped = [item for item in files if platform_of(item) == platform]
+    matched = match_auth(scoped, query)
+    if not matched:
+        await UniMessage(f"没有找到 [{platform}] 凭证：{query}").finish()
+        raise CPAError(f"没有找到凭证：{query}")
+    if len(matched) > 1:
+        await UniMessage(format_ambiguous(f"{platform} {query}", matched)).finish()
+        raise CPAError("匹配到多个凭证")
+    return matched[0]
 
 
 async def _lookup(query: str) -> list[dict[str, Any]]:

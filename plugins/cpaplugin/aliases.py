@@ -32,7 +32,45 @@ def identity_keys(file: dict[str, Any]) -> list[str]:
                 continue
             seen.add(lowered)
             keys.append(item)
+    scoped = _scoped_email_key(file)
+    if scoped and scoped.lower() not in seen:
+        keys.append(scoped)
     return keys
+
+
+def unique_identity_keys(file: dict[str, Any]) -> list[str]:
+    """跨平台同邮箱时只绑本条凭证，避免别名串号。"""
+    keys: list[str] = []
+    seen: set[str] = set()
+    for field in ("auth_index", "name"):
+        raw = str(file.get(field) or "").strip()
+        if not raw:
+            continue
+        candidates = [raw]
+        if raw.lower().endswith(".json"):
+            candidates.append(raw[:-5])
+        for item in candidates:
+            lowered = item.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            keys.append(item)
+    scoped = _scoped_email_key(file)
+    if scoped and scoped.lower() not in seen:
+        keys.append(scoped)
+    if keys:
+        return keys
+    return identity_keys(file)
+
+
+def _scoped_email_key(file: dict[str, Any]) -> str:
+    email = str(file.get("email") or file.get("account") or "").strip()
+    if "@" not in email:
+        return ""
+    provider = str(file.get("provider") or file.get("type") or "").strip().lower()
+    if not provider:
+        return ""
+    return f"{provider}:{email}"
 
 
 def resolve_alias(file: dict[str, Any]) -> str:
@@ -83,7 +121,7 @@ def set_alias(file: dict[str, Any], alias: str) -> str:
     if "@" in name:
         raise ValueError("别名不要包含邮箱。")
     mapping = load_aliases()
-    for key in identity_keys(file):
+    for key in unique_identity_keys(file):
         mapping[key] = name
     _commit(mapping)
     return name
@@ -109,15 +147,45 @@ def list_aliases() -> dict[str, list[str]]:
     return grouped
 
 
-def format_alias_list() -> str:
+def format_alias_list(
+    files: list[dict[str, Any]] | None = None,
+    *,
+    include_disabled: bool = False,
+) -> str:
     grouped = list_aliases()
     if not grouped:
-        return "还没有账号别名。设置：cpa alias set <查询词> <别名>"
+        return "还没有账号别名。设置：cpa alias set <渠道> <邮箱> <别名>"
     lines: list[str] = []
+    hidden = 0
     for alias, keys in grouped.items():
+        matched = _files_for_keys(files, keys) if files is not None else []
+        if files is not None and matched and not include_disabled:
+            if all(item.get("disabled") for item in matched):
+                hidden += 1
+                continue
         shown = ", ".join(_public_key(item) for item in keys)
         lines.append(f"{alias}  ←  {shown}")
+    if not lines:
+        if hidden:
+            return "没有可显示的别名（已隐藏 disabled 账号）。查看：cpa alias list --disabled"
+        return "还没有账号别名。设置：cpa alias set <渠道> <邮箱> <别名>"
     return "\n".join(lines)
+
+
+def _files_for_keys(files: list[dict[str, Any]], keys: list[str]) -> list[dict[str, Any]]:
+    needles = {item.lower() for item in keys}
+    matched: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for file in files:
+        markers = {item.lower() for item in identity_keys(file)}
+        if not (needles & markers):
+            continue
+        stamp = str(file.get("auth_index") or file.get("name") or id(file))
+        if stamp in seen:
+            continue
+        seen.add(stamp)
+        matched.append(file)
+    return matched
 
 
 def _public_key(key: str) -> str:

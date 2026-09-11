@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -54,11 +55,32 @@ ANTIGRAVITY_URLS = (
     "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
 )
 
+ANTIGRAVITY_PLAN_URLS = (
+    "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
+    "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
+    "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:loadCodeAssist",
+)
+
+ANTIGRAVITY_PLAN_BODY = '{"metadata":{"ideType":"ANTIGRAVITY"}}'
+
+_AUTH_MECHANISMS = {"oauth", "api_key", "api-key", "apikey", "session", "token"}
+
+_PLAN_BY_TIER_ID = {
+    "free-tier": "Free",
+    "g1-pro-tier": "Pro",
+    "g1-plus-tier": "Plus",
+    "g1-ultra-tier": "Ultra",
+    "g1-ultra-lite-tier": "Ultra Lite",
+    "legacy-tier": "Legacy",
+}
+
 WINDOW_ORDER = (
     "gemini-5h",
     "gemini-week",
+    "gemini-month",
     "claude-gpt-5h",
     "claude-gpt-week",
+    "claude-gpt-month",
     "code-5h",
     "code-7d",
     "five_hour",
@@ -235,9 +257,14 @@ def format_quota_board(board: QuotaBoard, *, account_limit: int = 12) -> list[st
 def platform_total_chips(section: PlatformQuota) -> list[str]:
     account_n = len(section.accounts)
     chips: list[str] = []
-    window_ids = [wid for wid in WINDOW_ORDER if wid in section.window_remain_sum]
-    window_ids.extend(wid for wid in section.window_remain_sum if wid not in window_ids)
-    for window_id in window_ids:
+    ordered = sort_windows(
+        [
+            QuotaWindow(id=window_id, label=section.window_labels.get(window_id, window_id))
+            for window_id in section.window_remain_sum
+        ]
+    )
+    for window in ordered:
+        window_id = window.id
         total = section.window_remain_sum[window_id]
         count = section.window_remain_count.get(window_id, 0)
         denom = count or account_n
@@ -275,7 +302,7 @@ async def _one_account(
         platform=platform,
         name=display_name(file, public=True),
         auth_index=str(file.get("auth_index") or ""),
-        plan=str(file.get("account_type") or file.get("account") or ""),
+        plan=_plan_from_auth_file(file),
         status=str(file.get("status") or "unknown"),
         disabled=bool(file.get("disabled")),
         cooling=is_cooling(file),
@@ -320,9 +347,9 @@ async def _fill_claude(client: ManagementClient, cfg: Config, report: AccountQuo
     if payload is None:
         return
     windows, plan = parse_claude_usage(payload)
-    report.windows = windows
-    report.status = _status_from_windows(windows, report)
-    report.plan = plan or report.plan
+    report.windows = sort_windows(windows)
+    report.status = _status_from_windows(report.windows, report)
+    report.plan = _sanitize_plan(plan) or report.plan
     report.error = ""
 
 
@@ -357,9 +384,9 @@ async def _fill_codex(
     if payload is None:
         return
     windows, plan = parse_codex_usage(payload)
-    report.windows = windows
-    report.status = _status_from_windows(windows, report)
-    report.plan = plan or report.plan
+    report.windows = sort_windows(windows)
+    report.status = _status_from_windows(report.windows, report)
+    report.plan = _sanitize_plan(plan) or report.plan
     report.error = ""
 
 
@@ -374,7 +401,7 @@ async def _fill_kimi(client: ManagementClient, cfg: Config, report: AccountQuota
     )
     if payload is None:
         return
-    report.windows = parse_kimi_usage(payload)
+    report.windows = sort_windows(parse_kimi_usage(payload))
     report.status = _status_from_windows(report.windows, report)
     report.error = ""
 
@@ -395,7 +422,7 @@ async def _fill_xai(client: ManagementClient, cfg: Config, report: AccountQuota)
     )
     if payload is None:
         return
-    report.windows = parse_xai_billing(payload)
+    report.windows = sort_windows(parse_xai_billing(payload))
     report.status = _status_from_windows(report.windows, report)
     report.error = ""
 
@@ -413,9 +440,12 @@ async def _fill_antigravity(client: ManagementClient, cfg: Config, report: Accou
             break
     if payload is None:
         return
-    report.windows = parse_antigravity_summary(payload)
+    report.windows = sort_windows(parse_antigravity_summary(payload))
     report.status = _status_from_windows(report.windows, report)
     report.error = ""
+    plan = await _antigravity_plan(client, cfg, report)
+    if plan:
+        report.plan = plan
 
 
 async def _fill_gemini(client: ManagementClient, cfg: Config, report: AccountQuota) -> None:
@@ -456,8 +486,8 @@ async def _fill_gemini(client: ManagementClient, cfg: Config, report: AccountQuo
                 window.remaining_percent = _clamp(remain / limit * 100.0)
                 window.used_percent = _clamp(100.0 - window.remaining_percent)
             windows.append(window)
-    report.windows = windows
-    report.status = _status_from_windows(windows, report)
+    report.windows = sort_windows(windows)
+    report.status = _status_from_windows(report.windows, report)
     report.error = ""
 
 
@@ -481,7 +511,7 @@ def parse_claude_usage(payload: dict[str, Any]) -> tuple[list[QuotaWindow], str]
             window.used_percent = _clamp(used)
             window.remaining_percent = _clamp(100.0 - window.used_percent)
         windows.append(window)
-    return windows, str(payload.get("plan_type") or payload.get("planType") or "")
+    return sort_windows(windows), _sanitize_plan(payload.get("plan_type") or payload.get("planType"))
 
 
 def parse_codex_usage(payload: dict[str, Any]) -> tuple[list[QuotaWindow], str]:
@@ -493,7 +523,7 @@ def parse_codex_usage(payload: dict[str, Any]) -> tuple[list[QuotaWindow], str]:
         windows.append(_codex_window("code-5h", "5h", five, rate))
     if weekly:
         windows.append(_codex_window("code-7d", "周", weekly, rate))
-    return [item for item in windows if item], plan
+    return sort_windows([item for item in windows if item]), _sanitize_plan(plan)
 
 
 def parse_kimi_usage(payload: dict[str, Any]) -> list[QuotaWindow]:
@@ -509,7 +539,9 @@ def parse_kimi_usage(payload: dict[str, Any]) -> list[QuotaWindow]:
             detail = item.get("detail") if isinstance(item.get("detail"), dict) else item
             label = str(item.get("title") or item.get("name") or item.get("scope") or f"限额{index + 1}")
             windows.append(_kimi_window(f"limit-{index}", label, detail if isinstance(detail, dict) else item))
-    return [item for item in windows if item.used_percent is not None or item.remaining is not None]
+    return sort_windows(
+        [item for item in windows if item.used_percent is not None or item.remaining is not None]
+    )
 
 
 def parse_xai_billing(payload: dict[str, Any]) -> list[QuotaWindow]:
@@ -566,7 +598,7 @@ def parse_xai_billing(payload: dict[str, Any]) -> list[QuotaWindow]:
             window.used_percent = _clamp(used)
             window.remaining_percent = _clamp(100.0 - window.used_percent)
             windows.append(window)
-    return windows
+    return sort_windows(windows)
 
 
 def parse_antigravity_summary(payload: dict[str, Any]) -> list[QuotaWindow]:
@@ -593,7 +625,133 @@ def parse_antigravity_summary(payload: dict[str, Any]) -> list[QuotaWindow]:
                 window.remaining_percent = _clamp(frac * 100.0)
                 window.used_percent = _clamp(100.0 - window.remaining_percent)
             windows.append(window)
-    return windows
+    return sort_windows(windows)
+
+
+def parse_antigravity_plan(payload: dict[str, Any]) -> str:
+    current = payload.get("currentTier") or payload.get("current_tier")
+    paid = payload.get("paidTier") or payload.get("paid_tier")
+    current_tier = _as_dict(current) if not isinstance(current, str) else {"name": current, "id": current}
+    paid_tier = _as_dict(paid) if not isinstance(paid, str) else {"name": paid, "id": paid}
+    effective = paid_tier if paid_tier and (paid_tier.get("id") or paid_tier.get("name")) else current_tier
+    if not effective:
+        return ""
+    tier_id = _first_str(effective.get("id"), effective.get("tierId"), effective.get("tier_id"))
+    mapped = _PLAN_BY_TIER_ID.get(tier_id.lower()) if tier_id else ""
+    if mapped:
+        return mapped
+    name = _first_str(effective.get("name"), effective.get("displayName"), effective.get("description"))
+    return _plan_from_name(name) or _sanitize_plan(name)
+
+
+def sort_windows(windows: list[QuotaWindow]) -> list[QuotaWindow]:
+    indexed = {wid: index for index, wid in enumerate(WINDOW_ORDER)}
+
+    def _key(window: QuotaWindow) -> tuple[int, int, str]:
+        return (_window_span(window), indexed.get(window.id, len(WINDOW_ORDER)), window.label)
+
+    return sorted(windows, key=_key)
+
+
+def format_reset_zh(reset_label: str) -> str:
+    text = (reset_label or "").strip()
+    if not text or text == "-":
+        return ""
+    if text == "已过期":
+        return "额度已过期"
+    parts: list[str] = []
+    for amount, unit, zh in (
+        (r"(\d+)\s*d", "d", "天"),
+        (r"(\d+)\s*h", "h", "小时"),
+        (r"(\d+)\s*m", "m", "分"),
+    ):
+        match = re.search(amount, text, re.I)
+        if match:
+            parts.append(f"{int(match.group(1))}{zh}")
+    if parts:
+        return "在 " + "".join(parts) + " 后刷新额度"
+    return f"在 {text} 后刷新额度"
+
+
+def _window_span(window: QuotaWindow) -> int:
+    blob = f"{window.id} {window.label}".lower()
+    if any(token in blob for token in ("5h", "five", "hour", "滚动", "rolling")):
+        return 0
+    if any(token in blob for token in ("week", "weekly", "7d", "seven", "周")):
+        return 1
+    if any(token in blob for token in ("month", "monthly", "月")):
+        return 2
+    return 3
+
+
+def _plan_from_auth_file(file: dict[str, Any]) -> str:
+    subscription = file.get("subscription")
+    if isinstance(subscription, dict):
+        plan = parse_antigravity_plan({"paidTier": subscription, "currentTier": subscription})
+        if plan:
+            return plan
+        plan = _sanitize_plan(subscription.get("plan") or subscription.get("tierName") or subscription.get("name"))
+        if plan:
+            return plan
+    for key in ("plan", "plan_type", "planType", "tier", "tier_name", "tierName"):
+        plan = _sanitize_plan(file.get(key))
+        if plan:
+            return plan
+    return ""
+
+
+def _plan_from_name(name: str) -> str:
+    blob = name.lower().replace("_", " ").replace("-", " ")
+    if "ultra lite" in blob or "ultralite" in blob:
+        return "Ultra Lite"
+    if "ultra" in blob:
+        return "Ultra"
+    if "plus" in blob:
+        return "Plus"
+    if "pro" in blob:
+        return "Pro"
+    if "legacy" in blob:
+        return "Legacy"
+    if "free" in blob:
+        return "Free"
+    return ""
+
+
+def _sanitize_plan(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if "@" in text:
+        return ""
+    if text.lower().replace("_", "-") in _AUTH_MECHANISMS:
+        return ""
+    mapped = _PLAN_BY_TIER_ID.get(text.lower())
+    if mapped:
+        return mapped
+    named = _plan_from_name(text)
+    return named or text
+
+
+async def _antigravity_plan(client: ManagementClient, cfg: Config, report: AccountQuota) -> str:
+    headers = {
+        "Authorization": "Bearer $TOKEN$",
+        "Content-Type": "application/json",
+        "User-Agent": "antigravity/cli/1.0.13 (aidev_client; os_type=darwin; arch=arm64)",
+    }
+    saved_error = report.error
+    saved_status = report.status
+    try:
+        for url in ANTIGRAVITY_PLAN_URLS:
+            payload = await _upstream_json(client, cfg, report, "POST", url, headers, data=ANTIGRAVITY_PLAN_BODY)
+            if payload is None:
+                continue
+            plan = parse_antigravity_plan(payload)
+            if plan:
+                return plan
+        return ""
+    finally:
+        report.error = saved_error
+        report.status = saved_status
 
 
 def _antigravity_window(group_name: str, bucket_name: str) -> tuple[str, str]:
@@ -603,14 +761,19 @@ def _antigravity_window(group_name: str, bucket_name: str) -> tuple[str, str]:
     is_claude = "claude" in group or "gpt" in group
     is_5h = "five" in bucket or "5h" in bucket or "5-hour" in bucket or "hour" in bucket
     is_week = "week" in bucket or "weekly" in bucket or "seven" in bucket
+    is_month = "month" in bucket or "monthly" in bucket or "30d" in bucket
     if is_gemini and is_5h:
         return "gemini-5h", "Gemini 5h"
     if is_gemini and is_week:
         return "gemini-week", "Gemini 周"
+    if is_gemini and is_month:
+        return "gemini-month", "Gemini 月"
     if is_claude and is_5h:
         return "claude-gpt-5h", "Claude/GPT 5h"
     if is_claude and is_week:
         return "claude-gpt-week", "Claude/GPT 周"
+    if is_claude and is_month:
+        return "claude-gpt-month", "Claude/GPT 月"
     return f"{group_name}-{bucket_name}", f"{group_name} {bucket_name}"
 
 

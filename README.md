@@ -100,13 +100,13 @@ Bot 与 CPA 不在同一台机器时，CPA 需要 `remote-management.allow-remot
 | 命令 | 作用 |
 | --- | --- |
 | `cpa status` | 探活：版本头、凭证 ready / 禁用 / 冷却计数。不回传配置正文 |
-| `cpa auth list [provider]` | 凭证摘要 |
+| `cpa auth list [provider] [--disabled]` | 凭证摘要。默认隐藏已禁用账号 |
 | `cpa auth show <查询词>` | 单条详情与近期请求桶 |
 | `cpa auth on\|off <查询词>` | 启用 / 禁用（`enable` / `disable` 同义） |
 | `cpa auth models <查询词>` | 该凭证支持的模型 |
 | `cpa auth delete <查询词> --yes` | 删除磁盘凭证；无 `--yes` 只预告 |
-| `cpa alias list` | 列出账号显示别名 |
-| `cpa alias set <查询词> <别名>` | 为账号设置别名；额度图 / 列表用别名，不显示邮箱 |
+| `cpa alias list [--disabled]` | 列出账号显示别名。默认隐藏已禁用账号 |
+| `cpa alias set <渠道> <邮箱> <别名>` | 为指定渠道账号设置别名；同邮箱跨渠道必须带渠道 |
 | `cpa alias del <查询词>` | 删除别名 |
 | `cpa quota` | 按平台分组查上游额度，每个平台发一张合并卡片图 |
 | `cpa quota <平台>` | 只出该平台的合并图：`claude` / `codex` / `antigravity` / `kimi` / `xai` |
@@ -115,10 +115,11 @@ Bot 与 CPA 不在同一台机器时，CPA 需要 `remote-management.allow-remot
 | `cpa quota --text` | 只发文字总览（排障 / 无浏览器时） |
 | `cpa quota cooling` | 只看冷却（本地 CPA 状态，不打上游） |
 | `cpa quota reset <查询词>` | `POST /reset-quota`（使用完整 `auth_index`） |
-| `cpa login <渠道>` | 启动 OAuth / 设备码，后台轮询直到成功、失败或超时 |
+| `cpa login <渠道>` | 启动 OAuth / 设备码。授权完成后把浏览器回调链接发回聊天 |
+| `cpa login callback <回调链接>` | 手动提交 localhost 回调 URL |
 | `cpa login cancel` | 取消当前登录 |
 
-查询词可以是 email、文件名、label、别名或 `auth_index`（含前缀）。列表和额度图优先显示别名；未设别名时用 `渠道-短索引`，避免把邮箱发到聊天。详情 `cpa auth show` 仍会列出原始字段，便于对照。
+查询词可以是 email、文件名、label、别名或 `auth_index`（含前缀）。列表和额度图优先显示别名；未设别名时用 `渠道-短索引`，避免把邮箱发到聊天。同邮箱出现在多个渠道时用 `cpa alias set antigravity user@example.com AG-1`。详情 `cpa auth show` 仍会列出原始字段，便于对照。
 
 内置登录渠道：`claude` / `anthropic`、`codex`、`antigravity`、`kimi`、`xai`。若 CPA 插件声明了 `supports_oauth`，还会动态发现 `/{provider}-auth-url`。不要写死已从 core 移除的 `gemini-cli` / `qwen` / `iflow`。
 
@@ -142,7 +143,7 @@ CLIProxyAPI **没有**账号池额度聚合接口。`GET /auth-files` 只有健�
 
 未安装 Chromium 时会自动回退文字，并提示执行 `playwright install chromium`（推荐：`uv run playwright install chromium`）。`CPA_QUOTA_IMAGE=false` 或 `cpa quota --text` 可强制只要文字。
 
-支持的上游：Claude OAuth usage、Codex WHAM usage、Antigravity `retrieveUserQuotaSummary`、Kimi usages、xAI billing credits。未知 / API-key 渠道只显示本地健康状态。
+支持的上游：Claude OAuth usage、Codex WHAM usage、Antigravity `retrieveUserQuotaSummary` + `loadCodeAssist`（套餐）、Kimi usages、xAI billing credits。Antigravity 的 `account_type=oauth` 只是登录方式，套餐来自 `paidTier`（Pro / Plus / Ultra）。未知 / API-key 渠道只显示本地健康状态。
 
 不要用 `GET /usage-queue` 当「查用量」——它会把记录从队列里弹出，会和 WebUI / Redis `LPOP` 抢数据。全量刷新会打上游，群里连刷请用缓存或 `cpa quota antigravity` 只查一个平台。
 
@@ -150,7 +151,7 @@ CLIProxyAPI **没有**账号池额度聚合接口。`GET /auth-files` 只有健�
 
 - 机器人**不会**加 `is_webui=true`。该参数会在 CPA 本机 `51121` 起 callback，聊天场景通常不可达。
 - 授权链接 / 设备码优先私聊下发；私聊失败才回当前会话并警告。
-- 浏览器必须把 callback 打到 **CPA**（`/v0/management/oauth-callback`），不是 Bot。CPA 要能被上游 IdP 或你的浏览器访问。
+- 浏览器常会跳到 `localhost`。把地址栏完整回调链接发回当前聊天，或 `cpa login callback <url>`。插件会 `POST /oauth-callback`（`redirect_url`）转给 CPA。
 - Session 约 30 分钟；超时或 `cpa login cancel` 会 `DELETE /oauth-session`。
 
 ## 刻意不暴露的接口

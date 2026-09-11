@@ -11,19 +11,30 @@ _pkg.__path__ = [str(_plugin_dir)]
 sys.modules.setdefault("cpaplugin", _pkg)
 
 from cpaplugin.client import allowed_api_call_url
+from cpaplugin.format import (
+    extract_oauth_callback_url,
+    format_auth_list,
+    looks_like_oauth_callback,
+    visible_auth_files,
+)
 from cpaplugin.quota import (
     AccountQuota,
+    QuotaWindow,
     _build_board,
+    _plan_from_auth_file,
     _wanted_files,
     format_quota_board,
+    format_reset_zh,
     is_platform_query,
     normalize_platform,
+    parse_antigravity_plan,
     parse_antigravity_summary,
     parse_claude_usage,
     parse_codex_usage,
     parse_xai_billing,
     platform_of,
     platform_total_chips,
+    sort_windows,
 )
 from cpaplugin.render import build_platform_html
 
@@ -78,7 +89,7 @@ class ParserTests(unittest.TestCase):
                 "seven_day": {"utilization": 55},
             }
         )
-        self.assertEqual(plan, "pro")
+        self.assertEqual(plan, "Pro")
         self.assertEqual(windows[0].remaining_percent, 80.0)
         self.assertEqual(windows[1].remaining_percent, 45.0)
 
@@ -92,11 +103,40 @@ class ParserTests(unittest.TestCase):
                 },
             }
         )
-        self.assertEqual(plan, "plus")
+        self.assertEqual(plan, "Plus")
         self.assertEqual(windows[0].id, "code-5h")
         self.assertEqual(windows[0].remaining_percent, 90.0)
         self.assertEqual(windows[1].id, "code-7d")
         self.assertEqual(windows[1].remaining_percent, 100.0)
+
+    def test_antigravity_plan_from_paid_tier(self) -> None:
+        self.assertEqual(
+            parse_antigravity_plan({"paidTier": {"id": "g1-pro-tier", "name": "Google AI Pro"}}),
+            "Pro",
+        )
+        self.assertEqual(
+            parse_antigravity_plan({"currentTier": {"id": "g1-plus-tier", "name": "Google AI Plus"}}),
+            "Plus",
+        )
+        self.assertEqual(parse_antigravity_plan({"paidTier": {"name": "Google AI Ultra"}}), "Ultra")
+        self.assertEqual(_plan_from_auth_file({"account_type": "oauth", "account": "a@b.com"}), "")
+        self.assertEqual(_plan_from_auth_file({"plan_type": "plus"}), "Plus")
+
+    def test_windows_sort_rolling_week_month(self) -> None:
+        windows = sort_windows(
+            [
+                QuotaWindow(id="gemini-week", label="Gemini 周"),
+                QuotaWindow(id="gemini-month", label="Gemini 月"),
+                QuotaWindow(id="gemini-5h", label="Gemini 5h"),
+            ]
+        )
+        self.assertEqual([item.id for item in windows], ["gemini-5h", "gemini-week", "gemini-month"])
+
+    def test_reset_zh(self) -> None:
+        self.assertEqual(format_reset_zh("2h30m"), "在 2小时30分 后刷新额度")
+        self.assertEqual(format_reset_zh("19m"), "在 19分 后刷新额度")
+        self.assertEqual(format_reset_zh("1d2h"), "在 1天2小时 后刷新额度")
+        self.assertEqual(format_reset_zh("-"), "")
 
     def test_xai_weekly_and_products(self) -> None:
         windows = parse_xai_billing(
@@ -194,7 +234,9 @@ class BoardFormatTests(unittest.TestCase):
         self.assertIn("platform-antigravity", html_doc)
         self.assertIn("Antigravity", html_doc)
         self.assertIn("Gemini 5h 3.44/4 (86%)", html_doc)
-        self.assertIn("86% remaining", html_doc)
+        self.assertIn("还剩 86%", html_doc)
+        self.assertNotIn("% remaining", html_doc)
+        self.assertNotIn("Refreshes in", html_doc)
         self.assertIn("Gemini Models", html_doc)
         self.assertIn("Claude and GPT Models", html_doc)
         self.assertEqual(html_doc.count('<article class="card">'), 4)
@@ -261,6 +303,74 @@ class AccountAliasTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             set_alias({"email": "a@b.com", "auth_index": "x"}, "a@b.com")
 
+    def test_alias_list_hides_disabled(self) -> None:
+        from cpaplugin.aliases import format_alias_list, set_alias, use_memory_aliases
+
+        use_memory_aliases({})
+        enabled = {
+            "provider": "antigravity",
+            "email": "on@example.com",
+            "name": "on.json",
+            "auth_index": "aaaa1111ffff",
+            "disabled": False,
+        }
+        disabled = {
+            "provider": "codex",
+            "email": "off@example.com",
+            "name": "off.json",
+            "auth_index": "bbbb2222ffff",
+            "disabled": True,
+        }
+        set_alias(enabled, "家里号")
+        set_alias(disabled, "停用号")
+        listing = format_alias_list([enabled, disabled], include_disabled=False)
+        self.assertIn("家里号", listing)
+        self.assertNotIn("停用号", listing)
+        listing_all = format_alias_list([enabled, disabled], include_disabled=True)
+        self.assertIn("停用号", listing_all)
+
+    def test_same_email_alias_is_per_account(self) -> None:
+        from cpaplugin.aliases import resolve_alias, set_alias
+
+        antigravity = {
+            "provider": "antigravity",
+            "email": "same@example.com",
+            "name": "antigravity-same@example.com.json",
+            "auth_index": "agag1111ffff",
+        }
+        codex = {
+            "provider": "codex",
+            "email": "same@example.com",
+            "name": "codex-same@example.com.json",
+            "auth_index": "cxcx2222ffff",
+        }
+        set_alias(antigravity, "AG-1")
+        self.assertEqual(resolve_alias(antigravity), "AG-1")
+        self.assertEqual(resolve_alias(codex), "")
+
+
+class AuthListFilterTests(unittest.TestCase):
+    def test_hides_disabled_by_default(self) -> None:
+        files = [
+            {"provider": "antigravity", "disabled": False, "email": "on@example.com", "auth_index": "aaaa1111ffff", "status": "ready"},
+            {"provider": "codex", "disabled": True, "email": "off@example.com", "auth_index": "bbbb2222ffff", "status": "ready"},
+        ]
+        visible = visible_auth_files(files, include_disabled=False)
+        self.assertEqual(len(visible), 1)
+        text = format_auth_list(files, include_disabled=False)
+        self.assertNotIn("codex-bbbb", text)
+        self.assertIn("antigravity-aaaa", text)
+        all_text = format_auth_list(files, include_disabled=True)
+        self.assertIn("disabled", all_text)
+
+
+class OAuthCallbackParseTests(unittest.TestCase):
+    def test_extracts_localhost_callback(self) -> None:
+        url = "http://localhost:8317/v0/management/oauth-callback?provider=codex&state=codex-1&code=abc"
+        self.assertTrue(looks_like_oauth_callback(url))
+        self.assertEqual(extract_oauth_callback_url(f"完成了 {url}"), url)
+        self.assertFalse(looks_like_oauth_callback("https://example.com/docs"))
+
 
 class AllowlistTests(unittest.TestCase):
     def test_quota_urls_allowed(self) -> None:
@@ -268,6 +378,9 @@ class AllowlistTests(unittest.TestCase):
             allowed_api_call_url(
                 "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary"
             )
+        )
+        self.assertTrue(
+            allowed_api_call_url("https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist")
         )
         self.assertTrue(allowed_api_call_url("https://cli-chat-proxy.grok.com/v1/billing?format=credits"))
         self.assertFalse(allowed_api_call_url("https://example.com/steal"))
