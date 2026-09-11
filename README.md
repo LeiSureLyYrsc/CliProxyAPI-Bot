@@ -62,6 +62,8 @@ CPA_BASE_URL=http://127.0.0.1:8317
 CPA_MANAGEMENT_KEY=plaintext-management-password
 # 可选：额外管理员，值为各平台的 user id
 CPA_ADMINS=["87654321"]
+# 可选：允许执行 cpa codex refresh。SUPERUSERS 不能代替该权限
+# CODEX_REFRESH_ADMIN=["87654321"]
 # 可选
 # CPA_TIMEOUT=15
 # CPA_OAUTH_POLL_INTERVAL=3
@@ -80,6 +82,7 @@ CPA_ADMINS=["87654321"]
 | `CPA_BASE_URL` | CPA 地址。可写 `http://host:8317` 或带 `/v0/management` 的完整前缀 |
 | `CPA_MANAGEMENT_KEY` | 管理密钥**明文**，对应 `Authorization: Bearer` / `X-Management-Key` |
 | `CPA_ADMINS` | 除 `SUPERUSERS` 外允许使用 `cpa` 的用户 ID |
+| `CODEX_REFRESH_ADMIN` | 允许执行 `cpa codex refresh` 的用户 ID。空名单则任何人（含 SUPERUSERS）都不能刷新 |
 | `CPA_TIMEOUT` | HTTP 超时（秒） |
 | `CPA_OAUTH_POLL_INTERVAL` | 登录状态轮询间隔（秒） |
 | `CPA_OAUTH_TIMEOUT` | 登录等待上限（秒），默认 1800，与 CPA session TTL 接近 |
@@ -115,6 +118,7 @@ Bot 与 CPA 不在同一台机器时，CPA 需要 `remote-management.allow-remot
 | `cpa quota --text` | 只发文字总览（排障 / 无浏览器时） |
 | `cpa quota cooling` | 只看冷却（本地 CPA 状态，不打上游） |
 | `cpa quota reset <查询词>` | `POST /reset-quota`（使用完整 `auth_index`） |
+| `cpa codex refresh <查询词>` | 消耗 1 次 Codex 官方重置次数并刷新额度。仅 `CODEX_REFRESH_ADMIN` |
 | `cpa login <渠道>` | 启动 OAuth / 设备码。授权完成后把浏览器回调链接发回聊天 |
 | `cpa login callback <回调链接>` | 手动提交 localhost 回调 URL |
 | `cpa login cancel` | 取消当前登录 |

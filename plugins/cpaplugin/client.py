@@ -17,6 +17,7 @@ _API_CALL_ALLOWLIST: tuple[tuple[str, str], ...] = (
     ("api.anthropic.com", "/api/oauth/usage"),
     ("chatgpt.com", "/backend-api/wham/usage"),
     ("chatgpt.com", "/backend-api/wham/rate-limit-reset-credits"),
+    ("chatgpt.com", "/backend-api/wham/rate-limit-reset-credits/consume"),
     ("api.kimi.com", "/coding/v1/usages"),
     ("cli-chat-proxy.grok.com", "/v1/billing"),
     ("daily-cloudcode-pa.googleapis.com", "/v1internal:retrieveUserQuotaSummary"),

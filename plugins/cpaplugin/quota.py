@@ -4,6 +4,7 @@ import asyncio
 import json
 import re
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -62,6 +63,9 @@ ANTIGRAVITY_PLAN_URLS = (
 )
 
 ANTIGRAVITY_PLAN_BODY = '{"metadata":{"ideType":"ANTIGRAVITY"}}'
+
+CODEX_RESET_CREDITS_URL = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits"
+CODEX_RESET_CONSUME_URL = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume"
 
 _AUTH_MECHANISMS = {"oauth", "api_key", "api-key", "apikey", "session", "token"}
 
@@ -227,6 +231,162 @@ def clear_quota_cache() -> None:
     _cache_key = ""
     _cache_expires = 0.0
     _cache_board = None
+
+
+async def refresh_codex_quota(file: dict[str, Any]) -> str:
+    if platform_of(file) != "codex":
+        raise CPAError("只有 Codex 账号可以手动重置额度。")
+    auth_index = str(file.get("auth_index") or "")
+    if not auth_index:
+        raise CPAError("该凭证没有 auth_index，无法刷新 Codex 额度。")
+    cfg = get_plugin_config(Config)
+    client = get_client()
+    headers = _codex_headers(file)
+    credits = await _codex_upstream(client, cfg, auth_index, "GET", CODEX_RESET_CREDITS_URL, headers)
+    credit = pick_codex_reset_credit(credits)
+    if credit is None:
+        raise CPAError("没有可用的 Codex 重置次数。")
+    credit_id = _first_str(credit.get("id"), credit.get("credit_id"), credit.get("creditId"))
+    if not credit_id:
+        raise CPAError("重置券缺少 credit_id，无法消费。")
+    body = json.dumps({"credit_id": credit_id, "redeem_request_id": str(uuid.uuid4())})
+    result = await _codex_upstream(
+        client, cfg, auth_index, "POST", CODEX_RESET_CONSUME_URL, headers, data=body
+    )
+    clear_quota_cache()
+    return format_codex_refresh_result(file, credit, result)
+
+
+def pick_codex_reset_credit(payload: dict[str, Any]) -> dict[str, Any] | None:
+    credits = _codex_credit_list(payload)
+    available = [item for item in credits if _codex_credit_available(item)]
+    if not available:
+        return None
+
+    def _expiry(item: dict[str, Any]) -> float:
+        stamp = _first_str(
+            item.get("expires_at"),
+            item.get("expiresAt"),
+            item.get("expire_at"),
+            item.get("expireAt"),
+        )
+        parsed = _parse_ts(stamp)
+        return parsed if parsed is not None else float("inf")
+
+    return min(available, key=_expiry)
+
+
+def format_codex_refresh_result(
+    file: dict[str, Any],
+    credit: dict[str, Any],
+    result: dict[str, Any],
+) -> str:
+    name = display_name(file, public=True)
+    code = _first_str(result.get("code"), result.get("status")).lower()
+    remaining = _codex_remaining_count(result) or _codex_remaining_count(credit)
+    extra = f"剩余重置次数 {remaining}" if remaining else ""
+    if code in {"", "ok", "success", "reset"}:
+        text = f"已为 {name} 消耗 1 次 Codex 重置次数，额度窗口已刷新。"
+        return f"{text}{(' ' + extra) if extra else ''}"
+    if code == "no_credit":
+        return f"{name} 没有可用的 Codex 重置次数。"
+    if code == "nothing_to_reset":
+        return f"{name} 当前没有需要重置的额度窗口。"
+    if code == "already_redeemed":
+        return f"{name} 这张重置券已经用过。"
+    error = _first_str(result.get("error"), result.get("message"), code) or "未知错误"
+    return f"{name} Codex 重置失败：{error}"
+
+
+def _codex_headers(file: dict[str, Any]) -> dict[str, str]:
+    headers = {
+        "Authorization": "Bearer $TOKEN$",
+        "Content-Type": "application/json",
+        "User-Agent": "codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal",
+    }
+    account_id = _first_str(
+        file.get("chatgpt_account_id"),
+        file.get("chatgptAccountId"),
+        file.get("account_id"),
+        file.get("accountId"),
+    )
+    if account_id and "@" not in account_id:
+        headers["Chatgpt-Account-Id"] = account_id
+    return headers
+
+
+async def _codex_upstream(
+    client: ManagementClient,
+    cfg: Config,
+    auth_index: str,
+    method: str,
+    url: str,
+    header: dict[str, str],
+    data: str | None = None,
+) -> dict[str, Any]:
+    response = await client.api_call(
+        auth_index,
+        method,
+        url,
+        header=header,
+        data=data,
+        timeout=cfg.cpa_quota_timeout,
+    )
+    status = int(response.get("status_code") or response.get("statusCode") or 0)
+    body = _parse_body(response.get("body"))
+    if status and not (200 <= status < 300):
+        detail = ""
+        if isinstance(body, dict):
+            detail = _first_str(body.get("error"), body.get("message"), body.get("code"))
+        raise CPAError(f"上游 HTTP {status}" + (f"：{detail}" if detail else ""))
+    if body is None:
+        raise CPAError("上游返回无法解析")
+    return body
+
+
+def _codex_credit_list(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    for key in ("credits", "items", "rate_limit_reset_credits", "rateLimitResetCredits"):
+        raw = payload.get(key)
+        if isinstance(raw, list):
+            return [item for item in raw if isinstance(item, dict)]
+        if isinstance(raw, dict):
+            nested = raw.get("credits") or raw.get("items")
+            if isinstance(nested, list):
+                return [item for item in nested if isinstance(item, dict)]
+    return []
+
+
+def _codex_credit_available(item: dict[str, Any]) -> bool:
+    status = _first_str(item.get("status"), item.get("state")).lower()
+    if status and status not in {"available", "ok", "active", "unused"}:
+        return False
+    if item.get("redeemed") or item.get("redeemed_at") or item.get("redeemedAt"):
+        return False
+    return True
+
+
+def _codex_remaining_count(*payloads: dict[str, Any]) -> str:
+    for payload in payloads:
+        value = payload.get("available_count")
+        if value is None:
+            value = payload.get("availableCount")
+        if value is None:
+            value = payload.get("remaining")
+        if value is not None and value != "":
+            return str(value)
+    return ""
+
+
+def _parse_ts(value: str) -> float | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp()
+    except ValueError:
+        return None
 
 
 def format_quota_board(board: QuotaBoard, *, account_limit: int = 12) -> list[str]:

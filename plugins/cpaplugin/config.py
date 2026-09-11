@@ -7,6 +7,7 @@ class Config(BaseModel):
     cpa_base_url: str = "http://127.0.0.1:8317"
     cpa_management_key: str = ""
     cpa_admins: list[str] = Field(default_factory=list)
+    codex_refresh_admin: list[str] = Field(default_factory=list)
     cpa_timeout: float = 15.0
     cpa_oauth_poll_interval: float = 3.0
     cpa_oauth_timeout: float = 1800.0
@@ -33,7 +34,7 @@ class Config(BaseModel):
     def strip_key(cls, value: str) -> str:
         return value.strip()
 
-    @field_validator("cpa_admins")
+    @field_validator("cpa_admins", "codex_refresh_admin")
     @classmethod
     def normalize_admins(cls, value: list[str]) -> list[str]:
         return [item.strip() for item in value if item and item.strip()]

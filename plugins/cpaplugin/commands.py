@@ -44,6 +44,7 @@ from .quota import (
     peek_quota_cache,
     platform_of,
     clear_quota_cache,
+    refresh_codex_quota,
 )
 from .render import RenderError, render_board_images
 
@@ -83,6 +84,15 @@ async def _capture_oauth_callback(bot: Bot, event: Event) -> None:
         raise IgnoredException("cpa oauth callback") from exc
     await UniMessage(message).send()
     raise IgnoredException("cpa oauth callback")
+
+
+def _can_refresh_codex(event: Event) -> bool:
+    try:
+        user_id = event.get_user_id()
+    except Exception:
+        return False
+    admins = get_plugin_config(Config).codex_refresh_admin
+    return bool(admins) and user_id in admins
 
 
 def _text(query: Query[str]) -> str:
@@ -146,6 +156,11 @@ cpa = on_alconna(
             help_text="按平台查询上游额度并汇总",
         ),
         Subcommand(
+            "codex",
+            Subcommand("refresh", Args["query", str], help_text="消耗一次 Codex 重置次数并刷新额度"),
+            help_text="Codex 上游额度操作",
+        ),
+        Subcommand(
             "login",
             Subcommand("cancel", help_text="取消进行中的登录"),
             Subcommand("callback", Args["url", str], help_text="提交浏览器回调链接"),
@@ -155,7 +170,7 @@ cpa = on_alconna(
         meta=CommandMeta(
             description="CliProxyAPI 管理（仅管理员）",
             usage="发送 cpa 或 /cpa 查看完整帮助",
-            example="cpa status\ncpa auth list claude\ncpa alias set antigravity user@example.com AG-1\ncpa quota\ncpa quota antigravity\ncpa quota --fresh\ncpa quota --text\ncpa login claude",
+            example="cpa status\ncpa auth list claude\ncpa alias set antigravity user@example.com AG-1\ncpa quota\ncpa quota antigravity\ncpa quota --fresh\ncpa quota --text\ncpa codex refresh user@example.com\ncpa login claude",
         ),
     ),
     permission=CPA_ADMIN,
@@ -222,6 +237,10 @@ def _cpa_help_text(providers: str) -> str:
             "  cpa quota cooling    只看本地冷却中的凭证",
             "  cpa quota reset <查询词>",
             "    清除该号配额/冷却并恢复路由。",
+            "",
+            "【Codex 重置】消耗官方重置次数，立刻刷新 5h/周窗口。",
+            "  仅 CODEX_REFRESH_ADMIN 可执行；SUPERUSERS / CPA_ADMINS 不能代替该权限。",
+            "  cpa codex refresh <查询词>",
             "",
             "【登录】授权链接优先私聊。不要加 is_webui。",
             f"  可用渠道：{providers}",
@@ -375,6 +394,20 @@ async def quota_cooling() -> None:
     except CPAError as exc:
         await UniMessage(str(exc)).finish()
     await UniMessage(format_quota_list([item for item in files if is_cooling(item)])).finish()
+
+
+@cpa.assign("codex.refresh")
+async def codex_refresh(event: Event, query: Query[str] = Query("codex.refresh.query")) -> None:
+    if not _can_refresh_codex(event):
+        await UniMessage("未配置 Codex_Refresh_Admin，或你不在名单中，无法刷新。").finish()
+        return
+    file = await _require_one(_text(query))
+    try:
+        message = await refresh_codex_quota(file)
+    except CPAError as exc:
+        await UniMessage(str(exc)).finish()
+        return
+    await UniMessage(message).finish()
 
 
 @cpa.assign("quota.reset")
