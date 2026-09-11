@@ -94,8 +94,34 @@ def _can_refresh_codex(event: Event) -> bool:
     return bool(admins) and user_id in admins
 
 
-def _text(query: Query[str]) -> str:
-    return str(query.result).strip()
+def _text(query: Query[Any]) -> str:
+    raw = query.result
+    if isinstance(raw, (list, tuple)):
+        return " ".join(str(item).strip() for item in raw if str(item).strip()).strip()
+    return str(raw).strip()
+
+
+def _quota_needle(query: Query[Any], event: Event) -> str:
+    if query.available:
+        needle = _text(query)
+        if needle:
+            return needle
+    try:
+        parts = [item for item in event.get_plaintext().replace("\u3000", " ").split() if item]
+    except Exception:
+        return ""
+    skip_head = True
+    leftover: list[str] = []
+    for part in parts:
+        token = part.lstrip("/").lower()
+        if skip_head:
+            if token in {"cpa", "quota"} or part.startswith("-"):
+                continue
+            if token in {"cooling", "reset"}:
+                return ""
+            skip_head = False
+        leftover.append(part)
+    return " ".join(leftover).strip()
 
 
 def _without(*paths: str):
@@ -206,7 +232,7 @@ def _cpa_help_text(providers: str) -> str:
             "【凭证】",
             "  cpa auth list [渠道] [--disabled]",
             "    摘要列表。默认隐藏已禁用账号；加 --disabled 才显示。",
-            "    渠道如 claude / codex / antigravity / kimi / xai。",
+            "    渠道如 claude / codex(gpt, openai) / antigravity(反重力) / kimi / xai。",
             "  cpa auth show <查询词>",
             "    单条详情（含原始邮箱，仅管理员对照用）。",
             "  cpa auth on|off <查询词>",
@@ -228,7 +254,7 @@ def _cpa_help_text(providers: str) -> str:
             "  cpa quota",
             "    全平台。Antigravity / Codex / xAI 等各发一张图。",
             "  cpa quota <平台>",
-            "    只看一个平台：claude / codex / antigravity / kimi / xai",
+            "    只看一个平台：claude / codex(gpt, openai) / antigravity(反重力) / kimi / xai",
             "  cpa quota <查询词>",
             "    单个账号的额度卡。",
             "  cpa quota --fresh    忽略 60 秒缓存，强制重查上游",
@@ -424,7 +450,7 @@ async def quota_reset(query: Query[str] = Query("quota.reset.query")) -> None:
 
 
 @cpa.assign("quota", additional=_without("quota.cooling", "quota.reset"))
-async def quota_view(arp: Arparma, query: Query[str] = Query("quota.query")) -> None:
+async def quota_view(arp: Arparma, event: Event, query: Query[str] = Query("quota.query")) -> None:
     try:
         files = await get_client().list_auth_files()
     except CPAError as exc:
@@ -432,11 +458,12 @@ async def quota_view(arp: Arparma, query: Query[str] = Query("quota.query")) -> 
     platform = None
     target = files
     single = False
-    if query.available:
-        needle = _text(query)
+    needle = _quota_needle(query, event)
+    if needle:
         if is_platform_query(needle):
             platform = normalize_platform(needle)
-            if not any(platform_of(item) == platform for item in files):
+            target = [item for item in files if platform_of(item) == platform]
+            if not target:
                 await UniMessage(f"没有 {needle} 平台的凭证。").finish()
         else:
             matched = match_auth(files, needle)

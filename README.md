@@ -112,7 +112,7 @@ Bot 与 CPA 不在同一台机器时，CPA 需要 `remote-management.allow-remot
 | `cpa alias set <渠道> <邮箱> <别名>` | 为指定渠道账号设置别名；同邮箱跨渠道必须带渠道 |
 | `cpa alias del <查询词>` | 删除别名 |
 | `cpa quota` | 按平台分组查上游额度，每个平台发一张合并卡片图 |
-| `cpa quota <平台>` | 只出该平台的合并图：`claude` / `codex` / `antigravity` / `kimi` / `xai` |
+| `cpa quota <平台>` | 只出该平台的合并图：`claude` / `codex`(gpt, openai) / `antigravity`(反重力) / `kimi` / `xai` |
 | `cpa quota <查询词>` | 单个账号的额度卡片 |
 | `cpa quota --fresh` | 忽略缓存，强制重查 |
 | `cpa quota --text` | 只发文字总览（排障 / 无浏览器时） |

@@ -19,7 +19,10 @@ PLATFORM_ALIASES = {
     "claude": "claude",
     "anthropic": "claude",
     "codex": "codex",
+    "gpt": "codex",
+    "openai": "codex",
     "antigravity": "antigravity",
+    "反重力": "antigravity",
     "kimi": "kimi",
     "xai": "xai",
     "x-ai": "xai",
@@ -157,7 +160,8 @@ _cache_board: QuotaBoard | None = None
 
 
 def normalize_platform(value: str) -> str:
-    return PLATFORM_ALIASES.get(value.strip().lower().replace("_", "-"), "")
+    raw = value.strip().lower().replace("_", "-")
+    return PLATFORM_ALIASES.get(raw, "") or PLATFORM_ALIASES.get(value.strip(), "")
 
 
 def platform_of(file: dict[str, Any]) -> str:
