@@ -24,7 +24,13 @@ BUILTIN_AUTH_URLS: dict[str, str] = {
 
 
 def session_key(bot: Bot, event: Event) -> str:
-    return f"{bot.self_id}:{event.get_user_id()}"
+    try:
+        user_id = event.get_user_id()
+    except Exception:
+        return ""
+    if not user_id:
+        return ""
+    return f"{bot.self_id}:{user_id}"
 
 
 @dataclass
@@ -101,6 +107,8 @@ async def start_login(bot: Bot, event: Event, provider: str, payload: dict[str, 
         raise CPAError("登录接口没有返回 state，无法跟踪授权进度。")
 
     key = session_key(bot, event)
+    if not key:
+        raise CPAError("当前事件没有用户上下文，无法开始登录。")
     await cancel_local(key, notify=False)
 
     target = await send_secret(bot, event, _login_text(provider, payload))
@@ -111,7 +119,8 @@ async def start_login(bot: Bot, event: Event, provider: str, payload: dict[str, 
 
 
 def has_pending(bot: Bot, event: Event) -> bool:
-    return session_key(bot, event) in _pending
+    key = session_key(bot, event)
+    return bool(key) and key in _pending
 
 
 async def cancel_login(bot: Bot, event: Event) -> str:

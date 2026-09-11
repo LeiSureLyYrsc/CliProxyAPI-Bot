@@ -62,14 +62,13 @@ CPA_ADMIN = SUPERUSER | Permission(_extra_admin)
 
 @event_preprocessor
 async def _capture_oauth_callback(bot: Bot, event: Event) -> None:
-    if not has_pending(bot, event):
-        return
     try:
+        if getattr(event, "post_type", "") == "message_sent":
+            return
+        if not has_pending(bot, event):
+            return
         if not await CPA_ADMIN(bot, event):
             return
-    except Exception:
-        return
-    try:
         text = event.get_plaintext().strip()
     except Exception:
         return
