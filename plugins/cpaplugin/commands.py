@@ -240,6 +240,7 @@ def _cpa_help_text(providers: str) -> str:
             "【Codex 重置】消耗官方重置次数，立刻刷新 5h/周窗口。",
             "  仅 CODEX_REFRESH_ADMIN 可执行；SUPERUSERS / CPA_ADMINS 不能代替该权限。",
             "  cpa codex refresh <查询词>",
+            "    查询词：邮箱、别名、文件名、auth_index。只匹配 Codex 账号。",
             "",
             "【登录】授权链接优先私聊。不要加 is_webui。",
             f"  可用渠道：{providers}",
@@ -400,7 +401,7 @@ async def codex_refresh(event: Event, query: Query[str] = Query("codex.refresh.q
     if not _can_refresh_codex(event):
         await UniMessage("未配置 Codex_Refresh_Admin，或你不在名单中，无法刷新。").finish()
         return
-    file = await _require_one(_text(query))
+    file = await _require_platform_account("codex", _text(query))
     try:
         message = await refresh_codex_quota(file)
     except CPAError as exc:
