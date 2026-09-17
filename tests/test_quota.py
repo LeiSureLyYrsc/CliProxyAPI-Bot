@@ -50,7 +50,7 @@ class PlatformAliasTests(unittest.TestCase):
     def test_platform_of_normalizes_underscore(self) -> None:
         self.assertEqual(platform_of({"provider": "x_ai"}), "xai")
         self.assertEqual(platform_of({"type": "gemini"}), "gemini-cli")
-        self.assertEqual(platform_of({"provider": "openai"}), "other")
+        self.assertEqual(platform_of({"provider": "openai"}), "codex")
 
 
 class ParserTests(unittest.TestCase):
@@ -233,18 +233,17 @@ class BoardFormatTests(unittest.TestCase):
         html_doc = build_platform_html(section)
         self.assertIn("platform-antigravity", html_doc)
         self.assertIn("Antigravity", html_doc)
-        self.assertIn("Gemini 5h 3.44/4 (86%)", html_doc)
-        self.assertIn("还剩 86%", html_doc)
+        self.assertIn("344%", html_doc)
+        self.assertIn("86%", html_doc)
         self.assertNotIn("% remaining", html_doc)
         self.assertNotIn("Refreshes in", html_doc)
         self.assertIn("Gemini Models", html_doc)
         self.assertIn("Claude and GPT Models", html_doc)
-        self.assertEqual(html_doc.count('<article class="card">'), 4)
+        self.assertEqual(html_doc.count('<article class="card'), 5)  # 1 summary + 4 accounts
         self.assertIn('class="card-header"', html_doc)
         self.assertIn('class="card-content"', html_doc)
-        self.assertIn('class="progress"', html_doc)
-        self.assertIn("progress-indicator", html_doc)
-        self.assertIn("translateX(-14.0%)", html_doc)
+        self.assertIn('class="progress-track"', html_doc)
+        self.assertIn("progress-fill", html_doc)
         chips = platform_total_chips(section)
         self.assertTrue(any(item.startswith("Gemini 5h 3.44/4") for item in chips))
 

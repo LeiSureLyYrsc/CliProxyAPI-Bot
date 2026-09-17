@@ -1,27 +1,39 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import html
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from nonebot import get_plugin_config
-
-from .config import Config
 from .quota import (
     AccountQuota,
     PlatformQuota,
     QuotaBoard,
     QuotaWindow,
+    calculate_aggregate_windows,
+    calculate_plan_distribution,
+    calculate_total_reset_credits,
+    extract_earliest_reset_seconds,
     format_reset_zh,
-    platform_total_chips,
     sort_windows,
 )
 
+DEFAULT_CARDS_PER_ROW = 4
+GRID_ROWS_PER_IMAGE = 2
 CARDS_PER_IMAGE = 8
+
+
+def _chunks(items: list[Any], size: int) -> list[list[Any]]:
+    """向后兼容辅助函数。"""
+    return [items[index : index + size] for index in range(0, len(items), size)] or [[]]
+
 _ASSETS = Path(__file__).resolve().parent / "assets"
 _TEMPLATE = (_ASSETS / "quota.html").read_text(encoding="utf-8")
 _CSS = (_ASSETS / "quota.css").read_text(encoding="utf-8")
+_BRANDS_DIR = _ASSETS / "brands"
 
 _BADGES = {
     "claude": "CL",
@@ -43,6 +55,15 @@ _GROUP_TITLES = {
     "other": "Quota",
 }
 
+_BRAND_FILES = {
+    "claude": "claude.svg",
+    "codex": "codex.svg",
+    "antigravity": "antigravity.png",
+    "kimi": "kimi.svg",
+    "xai": "grok.svg",
+    "gemini-cli": "gemini.svg",
+}
+
 _lock = asyncio.Lock()
 _playwright: Any = None
 _browser: Any = None
@@ -52,115 +73,279 @@ class RenderError(Exception):
     """出图失败，消息可直接发给管理员。"""
 
 
-def build_platform_html(
+def get_platform_icon_uri(platform: str) -> str:
+    """返回本地 vendored 图标的 data URI，如果未找到则返回空字符串。"""
+    filename = _BRAND_FILES.get(platform)
+    if not filename:
+        return ""
+    icon_path = _BRANDS_DIR / filename
+    if not icon_path.exists():
+        return ""
+    try:
+        raw = icon_path.read_bytes()
+        mime = "image/svg+xml" if filename.endswith(".svg") else "image/png"
+        b64 = base64.b64encode(raw).decode("ascii")
+        return f"data:{mime};base64,{b64}"
+    except Exception:
+        return ""
+
+
+def get_render_settings_adapter() -> dict[str, Any]:
+    """
+    隔离读取渲染配置，若后端模块存在 get_render_settings() 则调用，
+    否则基于 Config 或优雅默认值回退。
+    返回包含 theme ('shadcn'|'mac'|'md3') 和 cards_per_row (1..6) 的字典。
+    """
+    try:
+        from . import render_settings  # type: ignore
+
+        if hasattr(render_settings, "get_render_settings"):
+            res = render_settings.get_render_settings()
+            if isinstance(res, dict):
+                return _normalize_settings(res)
+            if hasattr(res, "to_dict"):
+                return _normalize_settings(res.to_dict())
+            if hasattr(res, "__dict__"):
+                return _normalize_settings(res.__dict__)
+    except Exception:
+        pass
+
+    return _normalize_settings({"theme": "shadcn", "cards_per_row": DEFAULT_CARDS_PER_ROW})
+
+
+def _normalize_settings(raw: dict[str, Any]) -> dict[str, Any]:
+    raw_theme = str(raw.get("theme") or "shadcn").strip().lower()
+    if raw_theme in {"mac", "terminal", "dark-glass", "macos"}:
+        theme = "mac"
+    elif raw_theme in {"md3", "material", "material3", "android"}:
+        theme = "md3"
+    else:
+        theme = "shadcn"
+
+    try:
+        cols = int(raw.get("cards_per_row", DEFAULT_CARDS_PER_ROW))
+    except (ValueError, TypeError):
+        cols = DEFAULT_CARDS_PER_ROW
+    cols = max(1, min(6, cols))
+
+    return {"theme": theme, "cards_per_row": cols}
+
+
+def paginate_accounts(
+    accounts: list[AccountQuota],
+    cards_per_row: int = DEFAULT_CARDS_PER_ROW,
+    rows_per_page: int = GRID_ROWS_PER_IMAGE,
+) -> list[list[AccountQuota]]:
+    """
+    纯分页辅助函数：
+    - cards_per_row in 1..6
+    - 第 1 页容量为 (rows * cols - 1)，因为 Summary 卡片占据第 1 个网格单元
+    - 第 2 页及后续页容量为 (rows * cols)
+    """
+    cols = max(1, min(6, cards_per_row))
+    rows = max(1, rows_per_page)
+    full_cap = rows * cols
+    page1_cap = max(1, full_cap - 1)
+
+    if not accounts:
+        return [[]]
+
+    pages: list[list[AccountQuota]] = []
+    # 第 1 页
+    pages.append(accounts[:page1_cap])
+    remaining = accounts[page1_cap:]
+
+    # 后续页
+    while remaining:
+        pages.append(remaining[:full_cap])
+        remaining = remaining[full_cap:]
+
+    return pages
+
+
+def calculate_canvas_width(cards_per_row: int) -> int:
+    """根据列数动态计算合适的画布宽度。"""
+    cols = max(1, min(6, cards_per_row))
+    # 单卡宽度约为 240~270px 左右，外加 padding/gap
+    card_widths = {
+        1: 420,
+        2: 640,
+        3: 880,
+        4: 1120,
+        5: 1360,
+        6: 1600,
+    }
+    return card_widths.get(cols, 1120)
+
+
+def _format_exact_earliest_reset(seconds: float | None) -> str:
+    """
+    格式化最早刷新文本：
+    当 seconds 有效时返回：最快于 X小时X分 后刷新额度 (如果>0天则 X天X小时)
+    """
+    if seconds is None:
+        return ""
+    if seconds <= 0:
+        return "最快于 0分 后刷新额度"
+
+    secs = int(seconds)
+    days, rem = divmod(secs, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes = rem // 60
+
+    if days > 0:
+        part = f"{days}天{hours}小时" if hours else f"{days}天"
+    elif hours > 0:
+        part = f"{hours}小时{minutes}分" if minutes else f"{hours}小时"
+    else:
+        part = f"{max(minutes, 1)}分"
+
+    return f"最快于 {part} 后刷新额度"
+
+
+def build_summary_card_html(
     section: PlatformQuota,
-    accounts: list[AccountQuota] | None = None,
-    *,
-    page: int = 1,
-    pages: int = 1,
-    width: int | None = None,
+    all_accounts: list[AccountQuota],
+    theme: str,
 ) -> str:
-    cards = accounts if accounts is not None else section.accounts
-    canvas = width if width is not None else _canvas_width()
-    chips = "".join(
-        f'<span class="chip badge-outline">{html.escape(chip)}</span>'
-        for chip in platform_total_chips(section)
+    """构建首卡 Summary 卡片 HTML（作为 Grid 的第一个单元格）。"""
+    icon_uri = get_platform_icon_uri(section.platform)
+    if icon_uri:
+        icon_html = f'<img class="brand-icon" src="{icon_uri}" alt="{html.escape(section.platform)}" />'
+    else:
+        badge_text = _BADGES.get(section.platform, "?")
+        icon_html = f'<span class="brand-badge-fallback">{html.escape(badge_text)}</span>'
+
+    # 1. 计划分布 (Pro × N)
+    plan_dist = calculate_plan_distribution(all_accounts)
+    plan_chips_html = ""
+    if plan_dist:
+        chips = [
+            f'<span class="badge badge-plan">{html.escape(plan)} × {count}</span>'
+            for plan, count in plan_dist
+        ]
+        plan_chips_html = f'<div class="card-meta-row">{"".join(chips)}</div>'
+
+    # 2. 聚合配额 (SUM percent + average percent + count)
+    agg_windows = calculate_aggregate_windows(section, all_accounts)
+    stats_rows = []
+    for agg in agg_windows:
+        # 显示格式：Gemini 5h 344% (均 86% · 4号)
+        stats_rows.append(
+            f'<div class="summary-stat-row">'
+            f'<span class="summary-stat-label">{html.escape(agg["label"])}</span>'
+            f'<span class="summary-stat-val">'
+            f'<span class="sum-pct">{agg["sum_percent"]:.0f}%</span> '
+            f'<span class="avg-cnt">(均 {agg["avg_percent"]:.0f}% · {agg["count"]}号)</span>'
+            f'</span>'
+            f'</div>'
+        )
+    stats_html = (
+        f'<div class="summary-stats-grid">{"".join(stats_rows)}</div>' if stats_rows else ""
     )
-    grid_class = "grid single" if len(cards) == 1 else "grid"
-    note = f'<p class="page-note">第 {page}/{pages} 页</p>' if pages > 1 else ""
-    extra = " · 合并卡片" if len(section.accounts) > 1 else ""
-    body = (
-        f'<div class="sheet platform-{html.escape(section.platform)}">'
-        f'<section class="card summary">'
-        f'<div class="card-header"><div class="summary-head">'
-        f'<span class="avatar">{html.escape(_BADGES.get(section.platform, "?"))}</span>'
-        f"<div><h1 class=\"card-title\">{html.escape(section.title)}</h1>"
-        f'<p class="card-description">{len(section.accounts)} 账号{extra}</p>'
-        f"</div></div></div>"
-        f'<div class="card-content"><div class="chips">{chips}</div></div>'
-        f"</section>"
-        f'<div class="{grid_class}">{"".join(_card_html(account) for account in cards)}</div>'
-        f"{note}</div>"
+
+    # 3. 最早刷新文本
+    earliest_sec = extract_earliest_reset_seconds(all_accounts)
+    reset_text = _format_exact_earliest_reset(earliest_sec)
+    reset_banner_html = ""
+    if reset_text:
+        reset_banner_html = (
+            f'<div class="summary-reset-banner">'
+            f'<span>⏱️</span> <span>{html.escape(reset_text)}</span>'
+            f'</div>'
+        )
+
+    # 4. Total reset credits
+    total_rc = calculate_total_reset_credits(all_accounts)
+    rc_html = ""
+    if total_rc is not None:
+        rc_html = f'<span class="badge badge-credits">主动刷新次数: {total_rc}</span>'
+
+    header_meta = f'<div class="card-meta-row">{rc_html}</div>' if rc_html else ""
+
+    return (
+        f'<article class="card summary-card">'
+        f'<div class="card-header">'
+        f'<div class="title-row">'
+        f'<div class="summary-brand-row">{icon_html}<h2 class="card-title summary-title">{html.escape(section.title)}</h2></div>'
+        f'<span class="summary-account-count">{len(all_accounts)} 个账号</span>'
+        f'</div>'
+        f'{plan_chips_html}'
+        f'{header_meta}'
+        f'</div>'
+        f'<div class="card-content">'
+        f'{stats_html}'
+        f'{reset_banner_html}'
+        f'</div>'
+        f'</article>'
     )
-    css = _CSS.replace("__WIDTH__", str(canvas))
-    return _TEMPLATE.replace("__CSS__", css).replace("__BODY__", body)
-
-
-async def render_platform_images(section: PlatformQuota) -> list[bytes]:
-    if not section.accounts:
-        raise RenderError(f"{section.title} 没有可出图的账号。")
-    pages = _chunks(section.accounts, CARDS_PER_IMAGE)
-    images: list[bytes] = []
-    for index, accounts in enumerate(pages, start=1):
-        html_doc = build_platform_html(section, accounts, page=index, pages=len(pages))
-        images.append(await _screenshot(html_doc))
-    return images
-
-
-async def render_board_images(board: QuotaBoard) -> list[tuple[str, list[bytes]]]:
-    results: list[tuple[str, list[bytes]]] = []
-    for section in board.platforms:
-        results.append((section.platform, await render_platform_images(section)))
-    return results
-
-
-async def close_renderer() -> None:
-    global _playwright, _browser
-    async with _lock:
-        if _browser is not None:
-            try:
-                await _browser.close()
-            except Exception:
-                pass
-            _browser = None
-        if _playwright is not None:
-            try:
-                await _playwright.stop()
-            except Exception:
-                pass
-            _playwright = None
 
 
 def _card_html(account: AccountQuota) -> str:
-    flags = ""
-    if account.disabled or account.cooling:
-        bits = []
-        if account.disabled:
-            bits.append('<span class="flag flag-warn">disabled</span>')
-        if account.cooling:
-            bits.append('<span class="flag flag-warn">cooling</span>')
-        flags = f'<div class="card-action">{"".join(bits)}</div>'
-    plan = (
-        f'<span class="badge badge-secondary plan">Plan: {html.escape(account.plan)}</span>'
-        if account.plan
-        else ""
+    """构建账号卡片 HTML。"""
+    badges = []
+
+    # 冷却中 (中文)
+    if account.cooling:
+        badges.append('<span class="badge badge-cooling">冷却中</span>')
+    if account.disabled:
+        badges.append('<span class="badge badge-disabled">已停用</span>')
+
+    # 计划
+    if account.plan:
+        badges.append(f'<span class="badge badge-plan">{html.escape(account.plan)}</span>')
+
+    # 订阅过期时间标签
+    sub_label = getattr(account, "subscription_expires_label", None)
+    if sub_label:
+        badges.append(f'<span class="badge badge-warn">到期: {html.escape(str(sub_label))}</span>')
+
+    # Codex 刷新次数
+    reset_credits = getattr(account, "reset_credits", None)
+    if reset_credits is not None:
+        badges.append(f'<span class="badge badge-credits">主动刷新 {reset_credits} 次</span>')
+
+    title_badges_html = (
+        f'<div class="card-badges">{"".join(badges)}</div>' if badges else ""
     )
-    meta = f'<div class="meta-row">{plan}</div>' if plan else ""
+
     head = (
-        f'<div class="card-header"><div class="title-row">'
-        f'<h3 class="card-title">{html.escape(account.name)}</h3>{flags}</div>'
-        f"{meta}</div>"
+        f'<div class="card-header">'
+        f'<div class="title-row">'
+        f'<h3 class="card-title" title="{html.escape(account.name)}">{html.escape(account.name)}</h3>'
+        f'{title_badges_html}'
+        f'</div>'
+        f'</div>'
     )
+
     if account.error:
         return (
-            f'<article class="card">{head}'
-            f'<div class="card-content"><div class="error">{html.escape(account.error)}</div></div>'
-            f"</article>"
+            f'<article class="card">'
+            f'{head}'
+            f'<div class="card-content"><div class="card-err-box">{html.escape(account.error)}</div></div>'
+            f'</article>'
         )
+
     if not account.windows:
-        status = html.escape(account.status or "unknown")
+        status = account.status or "unknown"
+        status_text = "冷却中" if status == "cooling" else status
         return (
-            f'<article class="card">{head}'
-            f'<div class="card-content"><p class="empty">{status}（无上游额度）</p></div>'
-            f"</article>"
+            f'<article class="card">'
+            f'{head}'
+            f'<div class="card-content"><div class="bar-reset-hint">{html.escape(status_text)}（无上游配额）</div></div>'
+            f'</article>'
         )
-    groups = "".join(_group_html(title, windows) for title, windows in _grouped_windows(account.windows))
+
+    groups = "".join(
+        _group_html(title, windows)
+        for title, windows in _grouped_windows(account.windows)
+    )
     return f'<article class="card">{head}<div class="card-content">{groups}</div></article>'
 
 
 def _group_html(title: str, windows: list[QuotaWindow]) -> str:
     rows = "".join(_bar_html(window) for window in windows)
-    return f'<section class="group"><h2>{html.escape(title)}</h2>{rows}</section>'
+    return f'<section class="quota-group"><h4 class="group-title">{html.escape(title)}</h4>{rows}</section>'
 
 
 def _bar_html(window: QuotaWindow) -> str:
@@ -168,31 +353,54 @@ def _bar_html(window: QuotaWindow) -> str:
     used = window.used_percent
     if remain is None and used is not None:
         remain = max(0.0, 100.0 - used)
+    elif (
+        remain is None
+        and window.remaining is not None
+        and window.limit is not None
+        and window.limit > 0
+    ):
+        remain = max(0.0, min(100.0, (window.remaining / window.limit) * 100.0))
+
     width = 0.0 if remain is None else max(0.0, min(100.0, remain))
+
     if remain is not None:
-        value = f"还剩 {remain:.0f}%"
+        value_text = f"剩 {remain:.0f}%"
     elif used is not None:
-        value = f"已用 {used:.0f}%"
+        value_text = f"用 {used:.0f}%"
     elif window.remaining is not None and window.limit is not None:
-        value = f"{window.remaining:.0f}/{window.limit:.0f}"
+        value_text = f"{window.remaining:.0f}/{window.limit:.0f}"
     else:
-        value = "额度可用"
-    reset = ""
+        value_text = "可用"
+
     zh_reset = format_reset_zh(window.reset_label)
-    if zh_reset:
-        reset = f'<div class="reset">{html.escape(zh_reset)}</div>'
-    shift = 100.0 - width
+    reset_html = (
+        f'<div class="bar-reset-hint">{html.escape(zh_reset)}</div>' if zh_reset else ""
+    )
+
+    bar_level_class = ""
+    if remain is not None:
+        if remain <= 15:
+            bar_level_class = "bar-low"
+        elif remain <= 35:
+            bar_level_class = "bar-med"
+
     return (
-        f'<div class="bar-row"><div class="bar-meta">'
-        f'<span class="label">{html.escape(window.label)}</span>'
-        f'<span class="remain">{html.escape(value)}</span></div>'
-        f'<div class="progress" role="progressbar" aria-valuenow="{width:.0f}" aria-valuemin="0" aria-valuemax="100">'
-        f'<div class="progress-indicator" style="transform:translateX(-{shift:.1f}%)"></div></div>'
-        f"{reset}</div>"
+        f'<div class="bar-item {bar_level_class}">'
+        f'<div class="bar-meta">'
+        f'<span class="bar-label" title="{html.escape(window.label)}">{html.escape(window.label)}</span>'
+        f'<span class="bar-val">{html.escape(value_text)}</span>'
+        f'</div>'
+        f'<div class="progress-track">'
+        f'<div class="progress-fill" style="width: {width:.1f}%"></div>'
+        f'</div>'
+        f'{reset_html}'
+        f'</div>'
     )
 
 
-def _grouped_windows(windows: list[QuotaWindow]) -> list[tuple[str, list[QuotaWindow]]]:
+def _grouped_windows(
+    windows: list[QuotaWindow],
+) -> list[tuple[str, list[QuotaWindow]]]:
     grouped: dict[str, list[QuotaWindow]] = {}
     order: list[str] = []
     for window in windows:
@@ -229,23 +437,137 @@ def _group_key(window_id: str) -> str:
     return "other"
 
 
-def _chunks(items: list[AccountQuota], size: int) -> list[list[AccountQuota]]:
-    return [items[index : index + size] for index in range(0, len(items), size)] or [[]]
+def build_platform_html(
+    section: PlatformQuota,
+    accounts: list[AccountQuota] | None = None,
+    *,
+    page: int = 1,
+    pages: int = 1,
+    width: int | None = None,
+    theme: str | None = None,
+    cards_per_row: int | None = None,
+) -> str:
+    """
+    构建平台配额 HTML。
+    - theme: 'shadcn' | 'mac' | 'md3'
+    - cards_per_row: 1..6
+    - page: 当前页码
+    - pages: 总页码
+    - Summary 卡片仅在 page == 1 时作为第 1 个网格单元插入。
+    """
+    settings = get_render_settings_adapter()
+    actual_theme = (theme or settings.get("theme") or "shadcn").lower()
+    if actual_theme not in {"shadcn", "mac", "md3"}:
+        actual_theme = "shadcn"
+
+    cols = cards_per_row or settings.get("cards_per_row", DEFAULT_CARDS_PER_ROW)
+    cols = max(1, min(6, int(cols)))
+
+    canvas_w = width if width is not None else calculate_canvas_width(cols)
+    cur_accounts = accounts if accounts is not None else section.accounts
+
+    # 生成网格单元列表
+    grid_cells = []
+    if int(page) == 1:
+        # Summary 卡片是第 1 个网格单元
+        summary_cell = build_summary_card_html(section, section.accounts, actual_theme)
+        grid_cells.append(summary_cell)
+
+    # 账号卡片
+    for acc in cur_accounts:
+        grid_cells.append(_card_html(acc))
+
+    grid_content = "".join(grid_cells)
+    page_note = f'<div class="page-note">第 {page} / {pages} 页</div>' if pages > 1 else ""
+
+    if actual_theme == "mac":
+        sheet_inner = (
+            f'<div class="sheet-window">'
+            f'<div class="mac-titlebar">'
+            f'<div class="mac-controls">'
+            f'<span class="mac-btn mac-btn-close"></span>'
+            f'<span class="mac-btn mac-btn-min"></span>'
+            f'<span class="mac-btn mac-btn-max"></span>'
+            f'</div>'
+            f'<div class="mac-window-title">{html.escape(section.title)} 配额监控</div>'
+            f'</div>'
+            f'<div class="grid">{grid_content}</div>'
+            f'{page_note}'
+            f'</div>'
+        )
+    else:
+        sheet_inner = (
+            f'<div class="grid">{grid_content}</div>'
+            f'{page_note}'
+        )
+
+    theme_class = f"theme-{actual_theme}"
+    body = (
+        f'<div class="sheet {theme_class} platform-{html.escape(section.platform)}">'
+        f'{sheet_inner}'
+        f'</div>'
+    )
+
+    css = _CSS.replace("__WIDTH__", str(canvas_w)).replace("__COLS__", str(cols))
+    return _TEMPLATE.replace("__CSS__", css).replace("__BODY__", body)
 
 
-def _canvas_width() -> int:
-    try:
-        return max(400, min(720, int(get_plugin_config(Config).cpa_quota_image_width)))
-    except Exception:
-        return 520
+async def render_platform_images(section: PlatformQuota) -> list[bytes]:
+    if not section.accounts:
+        raise RenderError(f"{section.title} 没有可出图的账号。")
+
+    settings = get_render_settings_adapter()
+    theme = settings.get("theme", "shadcn")
+    cols = settings.get("cards_per_row", DEFAULT_CARDS_PER_ROW)
+
+    pages_accounts = paginate_accounts(section.accounts, cards_per_row=cols, rows_per_page=GRID_ROWS_PER_IMAGE)
+    total_pages = len(pages_accounts)
+    canvas_w = calculate_canvas_width(cols)
+
+    images: list[bytes] = []
+    for index, accounts in enumerate(pages_accounts, start=1):
+        html_doc = build_platform_html(
+            section,
+            accounts,
+            page=index,
+            pages=total_pages,
+            width=canvas_w,
+            theme=theme,
+            cards_per_row=cols,
+        )
+        images.append(await _screenshot(html_doc, width=canvas_w))
+    return images
 
 
-async def _screenshot(html_doc: str) -> bytes:
-    width = _canvas_width()
+async def render_board_images(board: QuotaBoard) -> list[tuple[str, list[bytes]]]:
+    results: list[tuple[str, list[bytes]]] = []
+    for section in board.platforms:
+        results.append((section.platform, await render_platform_images(section)))
+    return results
+
+
+async def close_renderer() -> None:
+    global _playwright, _browser
+    async with _lock:
+        if _browser is not None:
+            try:
+                await _browser.close()
+            except Exception:
+                pass
+            _browser = None
+        if _playwright is not None:
+            try:
+                await _playwright.stop()
+            except Exception:
+                pass
+            _playwright = None
+
+
+async def _screenshot(html_doc: str, width: int = 1080) -> bytes:
     async with _lock:
         browser = await _ensure_browser()
         context = await browser.new_context(
-            viewport={"width": width + 24, "height": 720},
+            viewport={"width": width + 32, "height": 800},
             device_scale_factor=2,
         )
         page = await context.new_page()

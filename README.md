@@ -93,6 +93,14 @@ CPA_ADMINS=["87654321"]
 | `CPA_QUOTA_IMAGE_WIDTH` | 出图宽度（px），默认 520 |
 | `CPA_ALIAS_FILE` | 账号别名 JSON，默认 `data/cpa_aliases.json`（不要提交） |
 | `CPA_ALIASES` | 可选的初始别名表，`{"邮箱或文件名":"显示名"}`；运行时 `cpa alias set` 会写进文件并覆盖 |
+| `SERVER_MODE` | 是否启动独立 FastAPI（不与 NoneBot 共用端口），供远程客户端出站连接。默认 false |
+| `CLIENT_NAME` | 本机客户端名称，默认 `Server`。远程客户端不能占用此名 |
+| `CPA_SERVER_HOST` | 独立服务器监听地址。公网请用反向代理，建议 `127.0.0.1` |
+| `CPA_SERVER_PORT` | 独立服务器端口，默认 8320 |
+| `CPA_SERVER_CLIENT_KEYS` | 远程客户端名称 → 独立密钥。名称必须与客户端 `CLIENT_NAME` 一致 |
+| `CPA_SERVER_REQUEST_TIMEOUT` | 向远程客户端查询额度的超时（秒） |
+| `CPA_SERVER_WS_MAX_SIZE` | WebSocket 消息上限（字节） |
+| `CPA_SERVER_MAX_ACCOUNTS` | 单个客户端一次最多接受的账号数 |
 
 Bot 与 CPA 不在同一台机器时，CPA 需要 `remote-management.allow-remote: true`，或设置环境变量 `MANAGEMENT_PASSWORD`（会强制允许远程）。未配置任何管理密钥时，`/v0/management` 会 404。
 
@@ -111,13 +119,22 @@ Bot 与 CPA 不在同一台机器时，CPA 需要 `remote-management.allow-remot
 | `cpa alias list [--disabled]` | 列出账号显示别名。默认隐藏已禁用账号 |
 | `cpa alias set <渠道> <邮箱> <别名>` | 为指定渠道账号设置别名；同邮箱跨渠道必须带渠道 |
 | `cpa alias del <查询词>` | 删除别名 |
-| `cpa quota` | 按平台分组查上游额度，每个平台发一张合并卡片图 |
+| `cpa theme` | 查看当前额度图主题（`shadcn` / `mac` / `md3`） |
+| `cpa theme set <default\|mac\|md3>` | 设置额度图主题（`default` 对应 `shadcn`） |
+| `cpa card` | 查看当前卡片排版设置 |
+| `cpa card row <1..6>` | 设置每行展示卡片数 |
+| `cpa quota` | 查本机客户端（默认名 `Server`）上游额度，每个平台一张合并卡片图 |
 | `cpa quota <平台>` | 只出该平台的合并图：`claude` / `codex`(gpt, openai) / `antigravity`(反重力) / `kimi` / `xai` |
+| `cpa quota <客户端>` | 查指定在线客户端，例如 `cpa quota Home` |
+| `cpa quota <平台> <客户端>` | 指定客户端的某个平台。顺序可互换 |
+| `cpa quota --client\|-c <客户端>` | 显式指定客户端，避免与平台名冲突 |
+| `cpa quota --all\|-all\|-a` | 分别查询本机与所有在线客户端，按客户端分组展示 |
+| `cpa quota <平台> --all` | 每个客户端只查该平台 |
 | `cpa quota <查询词>` | 单个账号的额度卡片 |
 | `cpa quota --fresh` | 忽略缓存，强制重查 |
 | `cpa quota --text` | 只发文字总览（排障 / 无浏览器时） |
-| `cpa quota cooling` | 只看冷却（本地 CPA 状态，不打上游） |
-| `cpa quota reset <查询词>` | `POST /reset-quota`（使用完整 `auth_index`） |
+| `cpa quota cooling` | 只看本机冷却（本地 CPA 状态，不打上游） |
+| `cpa quota reset <查询词>` | `POST /reset-quota`（仅本机；远程客户端不可用） |
 | `cpa codex refresh <查询词>` | 消耗 1 次 Codex 官方重置次数并刷新额度。查询词可用邮箱/别名，只匹配 Codex。仅 `CODEX_REFRESH_ADMIN` |
 | `cpa login <渠道>` | 启动 OAuth / 设备码。授权完成后把浏览器回调链接发回聊天 |
 | `cpa login callback <回调链接>` | 手动提交 localhost 回调 URL |
@@ -127,23 +144,28 @@ Bot 与 CPA 不在同一台机器时，CPA 需要 `remote-management.allow-remot
 
 内置登录渠道：`claude` / `anthropic`、`codex`、`antigravity`、`kimi`、`xai`。若 CPA 插件声明了 `supports_oauth`，还会动态发现 `/{provider}-auth-url`。不要写死已从 core 移除的 `gemini-cli` / `qwen` / `iflow`。
 
-## 额度说明
+## 额度说明与渲染配置
 
 CLIProxyAPI **没有**账号池额度聚合接口。`GET /auth-files` 只有健康 / 冷却状态。`cpa quota` 和管理台 Quota 页同一思路：按 `provider` 分组后，用内部白名单 `POST /v0/management/api-call` 打各平台用量接口（`$TOKEN$` 由 CPA 替换）。聊天里**不会**开放通用代发。
 
 默认跳过 `disabled` 凭证，与管理台「8 个文件 / 6 个参与额度」一致。
 
-**合计不是百分比相加。** `86% + 91%` 不会写成 `177%`。每个窗口先换成剩余比例（0–1），再按账号求和：
+### 汇总与统计格式
 
-```text
-【Antigravity】4 账号
-  合计：Gemini 5h 3.44/4 (86%) · Gemini 周 3.44/4 (86%) · Claude/GPT 周 1.64/4 (41%)
-  account-a (Pro)  Gemini 5h 剩 86% →19m · Gemini 周 剩 86% →18h
-```
+平台首卡（Summary Card）展示该平台账号的聚合统计，包含套餐分布、各时间窗口配额汇总、最早刷新时间以及 Codex 主动刷新点数：
 
-`3.44/4 (86%)` 表示：该窗口剩余当量 3.44 个满额号，4 个账号均剩 86%。1.00 = 满额一个号。
+- **窗口配额汇总**：同时展示**合计百分比**与**平均百分比 + 账号数**。例如 `720% (均 80% · 9号)`。
+- **账号卡片**：展示各账号的计划、冷却状态（`冷却中`）、订阅到期倒计时（含绝对日期）以及 Codex 可用的 `主动刷新 N 次`。
+- **品牌图标**：使用官方本地 vendored 图标（SVG / PNG 内嵌 Data URI），无外部网络请求。
 
-默认用 Playwright 把同一平台的账号卡合并成一张图发送（视觉对齐管理台 Quota 页，不含 Refresh / 时间轴）。超过 8 个账号会拆成多张。出图函数 `render_platform_images` / `render_board_images` 不依赖聊天会话，以后做定时推送可以直接复用。
+### 渲染设置与分页
+
+- 额度图支持 3 种主题：`shadcn`（现代卡片，默认）、`mac`（macOS 拟物窗口带红绿灯控制台与毛玻璃）、`md3`（Material Design 3 药丸胶囊风格）。
+- 每行卡片数支持 `1..6`（默认 4）。
+- **运行时配置存储**：主题与排版设置直接保存在别名文件同级目录的 `cpa_render_settings.json`（推导自 `CPA_ALIAS_FILE` 目录），通过 `/cpa theme set` 与 `/cpa card row` 即时修改并持久化保存，无需且不支持主题/排版环境变量。文件采用原子写入并保留未知扩展字段，损坏时自动回退默认值。
+- **分页布局**：基于 2 行网格分页。第 1 页因首单元格放置 Summary 卡片，容纳 `2 * 列数 - 1` 张账号卡片；第 2 页及后续页每页容纳 `2 * 列数` 张卡片。
+
+默认用 Playwright 把同一平台的账号卡合并成一张图发送。出图函数 `render_platform_images` / `render_board_images` 不依赖聊天会话，以后做定时推送可以直接复用。
 
 未安装 Chromium 时会自动回退文字，并提示执行 `playwright install chromium`（推荐：`uv run playwright install chromium`）。`CPA_QUOTA_IMAGE=false` 或 `cpa quota --text` 可强制只要文字。
 
@@ -171,3 +193,28 @@ CLIProxyAPI **没有**账号池额度聚合接口。`GET /auth-files` 只有健�
 ## 鉴权失败
 
 同一 IP 连续 5 次管理密钥错误会被 CPA 封禁约 30 分钟。插件在 401 / 403 后会暂停请求一段时间，避免把 Bot 所在 IP 打进黑名单。
+
+## Server_Mode（独立 FastAPI）
+
+`SERVER_MODE=true` 时，插件会在 NoneBot 之外再起一个 Uvicorn 端口（默认 `127.0.0.1:8320`），只接受独立 Python 客户端的出站 WebSocket。聊天 Bot 与该端口互不共用。
+
+本机 CLIProxyAPI 作为默认客户端，名称由 `CLIENT_NAME` 决定（默认 `Server`）。远程客户端必须使用**不同名称**和**各自独立的密钥**；同名连接会被拒绝，不会踢掉已有连接。
+
+独立客户端仓库：[LeiSureLyYrsc/CliProxyAPIBot-Client](https://github.com/LeiSureLyYrsc/CliProxyAPIBot-Client)。客户端没有 Bot 功能，只把本机 CPA 的额度结果回传给服务器。
+
+```env
+SERVER_MODE=true
+CLIENT_NAME=Server
+CPA_SERVER_HOST=127.0.0.1
+CPA_SERVER_PORT=8320
+CPA_SERVER_CLIENT_KEYS={"Home":"replace-with-random-secret","HK":"another-secret"}
+```
+
+公网部署建议：
+
+- Uvicorn 只绑 `127.0.0.1`，前面用 Caddy / Nginx 终止 TLS，只开放 `wss://`
+- 每个客户端独立密钥，泄露时只吊销该名称
+- 密钥放在 `Authorization: Bearer`，不要写进 URL
+- 关闭 `/docs`（本服务已关闭 OpenAPI）
+- CLIProxyAPI 管理端口不要暴露到公网
+- `cpa quota reset` / `cpa codex refresh` 只作用于本机，不会发到远程客户端

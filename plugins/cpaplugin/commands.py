@@ -34,17 +34,27 @@ from .oauth import (
     start_login,
     submit_callback,
 )
+from .hub import HubError, get_hub
+from .query import QuotaSelection, parse_quota_command
+from .render_settings import (
+    ALLOWED_THEMES,
+    get_render_settings,
+    set_cards_per_row,
+    set_theme,
+)
 from .quota import (
     PLATFORM_TITLES,
     QuotaBoard,
+    accounts_from_result,
+    board_from_accounts,
     collect_quotas,
     format_quota_board,
-    is_platform_query,
     normalize_platform,
     peek_quota_cache,
     platform_of,
     clear_quota_cache,
     refresh_codex_quota,
+    stamp_client,
 )
 from .render import RenderError, render_board_images
 
@@ -101,29 +111,6 @@ def _text(query: Query[Any]) -> str:
     return str(raw).strip()
 
 
-def _quota_needle(query: Query[Any], event: Event) -> str:
-    if query.available:
-        needle = _text(query)
-        if needle:
-            return needle
-    try:
-        parts = [item for item in event.get_plaintext().replace("\u3000", " ").split() if item]
-    except Exception:
-        return ""
-    skip_head = True
-    leftover: list[str] = []
-    for part in parts:
-        token = part.lstrip("/").lower()
-        if skip_head:
-            if token in {"cpa", "quota"} or part.startswith("-"):
-                continue
-            if token in {"cooling", "reset"}:
-                return ""
-            skip_head = False
-        leftover.append(part)
-    return " ".join(leftover).strip()
-
-
 def _without(*paths: str):
     async def _check(_event: Event, _bot: Bot, _state: Any, result: Arparma) -> bool:
         return all(result.query(path, "\0") == "\0" for path in paths)
@@ -135,6 +122,12 @@ cpa = on_alconna(
     Alconna(
         ["/", ""],
         "cpa",
+        Option(
+            "--all|-all|-a",
+            action=store_true,
+            dest="quota_all_passthrough",
+            help_text="兼容 cpa quota <平台> --all 的后置写法",
+        ),
         Subcommand("status", help_text="探活与凭证概览"),
         Subcommand(
             "auth",
@@ -172,12 +165,24 @@ cpa = on_alconna(
             help_text="账号显示别名，避免聊天里出现邮箱",
         ),
         Subcommand(
+            "theme",
+            Subcommand("set", Args["name", str], help_text="设置额度图主题：cpa theme set default|mac|md3"),
+            help_text="查看或设置额度图主题",
+        ),
+        Subcommand(
+            "card",
+            Subcommand("row", Args["count", str], help_text="设置每行卡片数：cpa card row 1..6"),
+            help_text="查看或设置卡片布局排版",
+        ),
+        Subcommand(
             "quota",
-            Args["query?", str],
             Option("--fresh|--refresh|-f", action=store_true, dest="fresh", help_text="忽略缓存强制刷新"),
             Option("--text|-t", action=store_true, dest="text", help_text="只发文字总览"),
+            Option("--all|-all|-a", action=store_true, dest="all_clients", help_text="查询所有在线客户端"),
+            Option("--client|-c", Args["client", str], dest="client", help_text="指定客户端名称"),
             Subcommand("cooling", help_text="仅看冷却中的凭证"),
             Subcommand("reset", Args["query", str], help_text="清除配额/冷却并恢复路由"),
+            Args["a?", str]["b?", str],
             help_text="按平台查询上游额度并汇总",
         ),
         Subcommand(
@@ -195,7 +200,7 @@ cpa = on_alconna(
         meta=CommandMeta(
             description="CliProxyAPI 管理（仅管理员）",
             usage="发送 cpa 或 /cpa 查看完整帮助",
-            example="cpa status\ncpa auth list claude\ncpa alias set antigravity user@example.com AG-1\ncpa quota\ncpa quota antigravity\ncpa quota --fresh\ncpa quota --text\ncpa codex refresh user@example.com\ncpa login claude",
+            example="cpa status\ncpa auth list claude\ncpa alias set antigravity user@example.com AG-1\ncpa quota\ncpa quota antigravity\ncpa quota Home\ncpa quota antigravity Home\ncpa quota --all\ncpa quota --fresh\ncpa quota --text\ncpa codex refresh user@example.com\ncpa login claude",
         ),
     ),
     permission=CPA_ADMIN,
@@ -250,18 +255,38 @@ def _cpa_help_text(providers: str) -> str:
             "    同邮箱跨渠道必须带渠道，避免串号。",
             "  cpa alias del <查询词>",
             "",
-            "【额度】按平台出合并卡片图；一个平台一张。",
+            "【主题与排版】修改后立刻生效并持久化保存。",
+            "  cpa theme",
+            "    查看当前额度图主题。",
+            "  cpa theme set default|mac|md3",
+            "    设置额度图主题（default 对应 shadcn）。",
+            "  cpa card",
+            "    查看当前卡片排版设置。",
+            "  cpa card row N",
+            "    设置每行展示卡片数（1..6）。",
+            "",
+            "【额度】按平台出合并卡片图；一个平台一张。危险操作不会发到远程客户端。",
             "  cpa quota",
-            "    全平台。Antigravity / Codex / xAI 等各发一张图。",
+            "    本机客户端（默认名 Server）全平台。",
             "  cpa quota <平台>",
             "    只看一个平台：claude / codex(gpt, openai) / antigravity(反重力) / kimi / xai",
+            "  cpa quota <客户端>",
+            "    查询指定在线客户端。例：cpa quota Home",
+            "  cpa quota <平台> <客户端>",
+            "    例：cpa quota antigravity Home  或  cpa quota Home antigravity",
+            "  cpa quota --client|-c <客户端>",
+            "    显式指定客户端，避免与平台名冲突。",
+            "  cpa quota --all|-all|-a",
+            "    分别查询本机与所有在线客户端，按客户端分组展示。",
+            "  cpa quota <平台> --all",
+            "    每个客户端只查该平台。",
             "  cpa quota <查询词>",
-            "    单个账号的额度卡。",
+            "    单个账号的额度卡（本机或指定客户端）。",
             "  cpa quota --fresh    忽略 60 秒缓存，强制重查上游",
             "  cpa quota --text     只发文字总览（排障 / 无浏览器）",
-            "  cpa quota cooling    只看本地冷却中的凭证",
+            "  cpa quota cooling    只看本机冷却中的凭证",
             "  cpa quota reset <查询词>",
-            "    清除该号配额/冷却并恢复路由。",
+            "    清除本机该号配额/冷却并恢复路由。远程客户端不可用。",
             "",
             "【Codex 重置】消耗官方重置次数，立刻刷新 5h/周窗口。",
             "  仅 CODEX_REFRESH_ADMIN 可执行；SUPERUSERS / CPA_ADMINS 不能代替该权限。",
@@ -413,6 +438,41 @@ async def alias_delete(query: Query[str] = Query("alias.delete.query")) -> None:
     await UniMessage(f"已删除 {shown} 的别名。额度图将改用渠道短索引。").finish()
 
 
+@cpa.assign("theme.set")
+async def cpa_theme_set(name: Query[str] = Query("theme.set.name")) -> None:
+    theme_name = _text(name)
+    try:
+        settings = set_theme(theme_name)
+    except ValueError as exc:
+        await UniMessage(str(exc)).finish()
+        return
+    await UniMessage(f"已将额度图主题设置为「{settings.theme}」。").finish()
+
+
+@cpa.assign("theme", additional=_without("theme.set"))
+async def cpa_theme_get() -> None:
+    settings = get_render_settings()
+    allowed = "/".join(ALLOWED_THEMES)
+    await UniMessage(f"当前额度图主题：{settings.theme}（可选：{allowed}）\n修改主题：cpa theme set <主题>").finish()
+
+
+@cpa.assign("card.row")
+async def cpa_card_row(count: Query[str] = Query("card.row.count")) -> None:
+    val = _text(count)
+    try:
+        settings = set_cards_per_row(val)
+    except ValueError as exc:
+        await UniMessage(str(exc)).finish()
+        return
+    await UniMessage(f"已设置每行展示 {settings.cards_per_row} 张卡片。").finish()
+
+
+@cpa.assign("card", additional=_without("card.row"))
+async def cpa_card_get() -> None:
+    settings = get_render_settings()
+    await UniMessage(f"当前每行卡片数：{settings.cards_per_row} (1..6)\n修改排版：cpa card row <数量>").finish()
+
+
 @cpa.assign("quota.cooling")
 async def quota_cooling() -> None:
     try:
@@ -450,65 +510,32 @@ async def quota_reset(query: Query[str] = Query("quota.reset.query")) -> None:
 
 
 @cpa.assign("quota", additional=_without("quota.cooling", "quota.reset"))
-async def quota_view(arp: Arparma, event: Event, query: Query[str] = Query("quota.query")) -> None:
-    try:
-        files = await get_client().list_auth_files()
-    except CPAError as exc:
-        await UniMessage(str(exc)).finish()
-    platform = None
-    target = files
-    single = False
-    needle = _quota_needle(query, event)
-    if needle:
-        if is_platform_query(needle):
-            platform = normalize_platform(needle)
-            target = [item for item in files if platform_of(item) == platform]
-            if not target:
-                await UniMessage(f"没有 {needle} 平台的凭证。").finish()
-        else:
-            matched = match_auth(files, needle)
-            if not matched:
-                await UniMessage(f"没有找到凭证：{needle}").finish()
-            if len(matched) > 1:
-                await UniMessage(format_ambiguous(needle, matched)).finish()
-            target = matched
-            single = True
-    force = bool(arp.find("quota.fresh"))
-    want_text = bool(arp.find("quota.text"))
-    skip_disabled = not single
-    board = None if force else peek_quota_cache(target, platform=platform, skip_disabled=skip_disabled)
-    if board is None:
-        await UniMessage("正在按平台查询上游额度，可能需要几秒…").send()
-        try:
-            board = await collect_quotas(
-                target, platform=platform, force=force, skip_disabled=skip_disabled
-            )
-        except CPAError as exc:
-            await UniMessage(str(exc)).finish()
+async def quota_view(event: Event) -> None:
     cfg = get_plugin_config(Config)
-    if want_text or not cfg.cpa_quota_image:
-        await _finish_quota_text(board)
-    try:
-        packed = await render_board_images(board)
-    except RenderError as exc:
-        await UniMessage(f"{exc}\n已回退为文字总览。").send()
-        await _finish_quota_text(board)
-    if not packed:
-        await UniMessage("没有可展示的额度账号。").finish()
-    cache_note = " · 缓存" if board.cached else ""
-    outgoing: list[tuple[str, bytes]] = []
-    for key, images in packed:
-        title = PLATFORM_TITLES.get(key, key)
-        total = len(images)
-        for index, png in enumerate(images, start=1):
-            extra = f" {index}/{total}" if total > 1 else ""
-            outgoing.append((f"{title} 额度{extra}{cache_note}", png))
-    for caption, png in outgoing[:-1]:
-        await UniMessage(caption).send()
-        await UniMessage(Image(raw=png, mimetype="image/png")).send()
-    caption, png = outgoing[-1]
-    await UniMessage(caption).send()
-    await UniMessage(Image(raw=png, mimetype="image/png")).finish()
+    hub = get_hub()
+    known = hub.known_names(cfg)
+    selection = parse_quota_command(
+        event.get_plaintext(),
+        known_clients=known,
+        default_client=cfg.client_name,
+    )
+    if selection.error:
+        await UniMessage(selection.error).finish()
+    names = _quota_targets(cfg, selection)
+    if not names:
+        await UniMessage("没有可查询的客户端。").finish()
+    await UniMessage("正在按平台查询上游额度，可能需要几秒…").send()
+    results: list[tuple[str, QuotaBoard | str]] = []
+    for name in names:
+        try:
+            if name == cfg.client_name:
+                board = await _local_quota_board(selection)
+            else:
+                board = await _remote_quota_board(name, selection)
+            results.append((name, board))
+        except (CPAError, HubError) as exc:
+            results.append((name, str(exc)))
+    await _send_quota_results(cfg, results, want_text=selection.text, multi=len(names) > 1)
 
 
 @cpa.assign("login.cancel")
@@ -544,6 +571,102 @@ async def login_start(bot: Bot, event: Event, provider: Query[str] = Query("logi
         await start_login(bot, event, canonical, payload)
     except CPAError as exc:
         await UniMessage(str(exc)).finish()
+
+
+def _quota_targets(cfg: Config, selection: QuotaSelection) -> list[str]:
+    local = cfg.client_name
+    if selection.all_clients:
+        names = [local]
+        for name in get_hub().online_names():
+            if name != local:
+                names.append(name)
+        return names
+    return [selection.client_name or local]
+
+
+async def _local_quota_board(selection: QuotaSelection) -> QuotaBoard:
+    files = await get_client().list_auth_files()
+    platform = selection.platform
+    target = files
+    single = False
+    if selection.account:
+        matched = match_auth(files, selection.account)
+        if not matched:
+            raise CPAError(f"没有找到凭证：{selection.account}")
+        if len(matched) > 1:
+            raise CPAError(format_ambiguous(selection.account, matched))
+        target = matched
+        single = True
+    elif platform:
+        target = [item for item in files if platform_of(item) == platform]
+        if not target:
+            raise CPAError(f"没有 {platform} 平台的凭证。")
+    force = selection.fresh
+    skip_disabled = not single
+    board = None if force else peek_quota_cache(target, platform=platform, skip_disabled=skip_disabled)
+    if board is None:
+        board = await collect_quotas(target, platform=platform, force=force, skip_disabled=skip_disabled)
+    return stamp_client(board, get_plugin_config(Config).client_name)
+
+
+async def _remote_quota_board(name: str, selection: QuotaSelection) -> QuotaBoard:
+    result = await get_hub().query_quota(
+        name,
+        platform=selection.platform,
+        account=selection.account,
+        fresh=selection.fresh,
+    )
+    return board_from_accounts(accounts_from_result(result), cached=result.cached)
+
+
+async def _send_quota_results(
+    cfg: Config,
+    results: list[tuple[str, QuotaBoard | str]],
+    *,
+    want_text: bool,
+    multi: bool,
+) -> None:
+    prefix = multi or cfg.server_mode
+    outgoing: list[tuple[str, bytes | None]] = []
+    for name, item in results:
+        if isinstance(item, str):
+            outgoing.append((f"[{name}] {item}" if prefix else item, None))
+            continue
+        label = f"[{name}] " if prefix else ""
+        if want_text or not cfg.cpa_quota_image:
+            chunks = format_quota_board(item)
+            outgoing.extend((f"{label}{chunk}" if label else chunk, None) for chunk in chunks)
+            continue
+        try:
+            packed = await render_board_images(item)
+        except RenderError as exc:
+            outgoing.append((f"{label}{exc}\n已回退为文字总览。" if label else f"{exc}\n已回退为文字总览。", None))
+            chunks = format_quota_board(item)
+            outgoing.extend((f"{label}{chunk}" if label else chunk, None) for chunk in chunks)
+            continue
+        if not packed:
+            outgoing.append((f"{label}没有可展示的额度账号。" if label else "没有可展示的额度账号。", None))
+            continue
+        cache_note = " · 缓存" if item.cached else ""
+        for key, images in packed:
+            title = PLATFORM_TITLES.get(key, key)
+            total = len(images)
+            for index, png in enumerate(images, start=1):
+                extra = f" {index}/{total}" if total > 1 else ""
+                outgoing.append((f"{label}{title} 额度{extra}{cache_note}", png))
+    if not outgoing:
+        await UniMessage("没有可展示的额度账号。").finish()
+        return
+    for caption, png in outgoing[:-1]:
+        await UniMessage(caption).send()
+        if png is not None:
+            await UniMessage(Image(raw=png, mimetype="image/png")).send()
+    caption, png = outgoing[-1]
+    if png is None:
+        await UniMessage(caption).finish()
+        return
+    await UniMessage(caption).send()
+    await UniMessage(Image(raw=png, mimetype="image/png")).finish()
 
 
 async def _finish_quota_text(board: QuotaBoard) -> None:

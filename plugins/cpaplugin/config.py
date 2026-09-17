@@ -1,3 +1,5 @@
+import unicodedata
+
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -18,6 +20,14 @@ class Config(BaseModel):
     cpa_quota_image_width: int = 520
     cpa_alias_file: str = "data/cpa_aliases.json"
     cpa_aliases: dict[str, str] = Field(default_factory=dict)
+    server_mode: bool = False
+    client_name: str = "Server"
+    cpa_server_host: str = "127.0.0.1"
+    cpa_server_port: int = 8320
+    cpa_server_client_keys: dict[str, str] = Field(default_factory=dict)
+    cpa_server_request_timeout: float = 40.0
+    cpa_server_ws_max_size: int = 1_048_576
+    cpa_server_max_accounts: int = 200
 
     @field_validator("cpa_aliases")
     @classmethod
@@ -38,3 +48,31 @@ class Config(BaseModel):
     @classmethod
     def normalize_admins(cls, value: list[str]) -> list[str]:
         return [item.strip() for item in value if item and item.strip()]
+
+    @field_validator("client_name")
+    @classmethod
+    def normalize_client_name(cls, value: str) -> str:
+        name = unicodedata.normalize("NFC", value.strip() or "Server")
+        if not _valid_client_name(name):
+            raise ValueError("CLIENT_NAME 非法：1–32 字符，不能含空白或 / \\，且不能以 - 开头。")
+        return name
+
+    @field_validator("cpa_server_client_keys")
+    @classmethod
+    def normalize_client_keys(cls, value: dict[str, str]) -> dict[str, str]:
+        cleaned: dict[str, str] = {}
+        for key, secret in value.items():
+            name = unicodedata.normalize("NFC", str(key).strip())
+            token = str(secret).strip()
+            if not name or not token:
+                continue
+            if not _valid_client_name(name):
+                raise ValueError(f"客户端名称非法：{name}")
+            cleaned[name] = token
+        return cleaned
+
+
+def _valid_client_name(name: str) -> bool:
+    from .protocol import valid_client_name
+
+    return valid_client_name(name)

@@ -7,6 +7,7 @@ require("nonebot_plugin_alconna")
 
 from . import commands as commands  # noqa: E402, F401
 from .client import close_client  # noqa: E402
+from .hub import get_hub  # noqa: E402
 from .oauth import cancel_all  # noqa: E402
 from .render import close_renderer  # noqa: E402
 from nonebot_plugin_alconna import __supported_adapters__  # noqa: E402
@@ -28,8 +29,14 @@ config = get_plugin_config(Config)
 driver = get_driver()
 
 
+@driver.on_startup
+async def _startup() -> None:
+    await get_hub().start(get_plugin_config(Config))
+
+
 @driver.on_shutdown
 async def _shutdown() -> None:
     await cancel_all()
     await close_renderer()
     await close_client()
+    await get_hub().stop()
