@@ -14,6 +14,7 @@ from .quota import (
     QuotaBoard,
     QuotaWindow,
     calculate_aggregate_windows,
+    calculate_grouped_earliest_resets,
     calculate_plan_distribution,
     calculate_total_reset_credits,
     extract_earliest_reset_seconds,
@@ -93,8 +94,8 @@ def get_platform_icon_uri(platform: str) -> str:
 def get_render_settings_adapter() -> dict[str, Any]:
     """
     隔离读取渲染配置，若后端模块存在 get_render_settings() 则调用，
-    否则基于 Config 或优雅默认值回退。
-    返回包含 theme ('shadcn'|'mac'|'md3') 和 cards_per_row (1..6) 的字典。
+    否则基于默认值回退。
+    返回包含 theme ('shadcn'|'mac'|'md3'|'winxp') 和 cards_per_row (1..6) 的字典。
     """
     try:
         from . import render_settings  # type: ignore
@@ -119,6 +120,8 @@ def _normalize_settings(raw: dict[str, Any]) -> dict[str, Any]:
         theme = "mac"
     elif raw_theme in {"md3", "material", "material3", "android"}:
         theme = "md3"
+    elif raw_theme == "winxp":
+        theme = "winxp"
     else:
         theme = "shadcn"
 
@@ -244,16 +247,24 @@ def build_summary_card_html(
         f'<div class="summary-stats-grid">{"".join(stats_rows)}</div>' if stats_rows else ""
     )
 
-    # 3. 最早刷新文本
-    earliest_sec = extract_earliest_reset_seconds(all_accounts)
-    reset_text = _format_exact_earliest_reset(earliest_sec)
-    reset_banner_html = ""
-    if reset_text:
-        reset_banner_html = (
-            f'<div class="summary-reset-banner">'
-            f'<span>⏱️</span> <span>{html.escape(reset_text)}</span>'
-            f'</div>'
-        )
+    # 3. 最早刷新多分组文本列表
+    grouped_resets = calculate_grouped_earliest_resets(all_accounts)
+    reset_list_html = ""
+    if grouped_resets:
+        rows_html = []
+        for grp in grouped_resets:
+            text = _format_exact_earliest_reset(grp["seconds"])
+            if not text:
+                continue
+            kind_label = f'{grp["model"]} · {grp["period"]}：'
+            rows_html.append(
+                f'<div class="summary-reset-row">'
+                f'<span class="summary-reset-kind">{html.escape(kind_label)}</span>'
+                f'<span class="summary-reset-time">{html.escape(text)}</span>'
+                f'</div>'
+            )
+        if rows_html:
+            reset_list_html = f'<div class="summary-reset-list">{"".join(rows_html)}</div>'
 
     # 4. Total reset credits
     total_rc = calculate_total_reset_credits(all_accounts)
@@ -275,7 +286,7 @@ def build_summary_card_html(
         f'</div>'
         f'<div class="card-content">'
         f'{stats_html}'
-        f'{reset_banner_html}'
+        f'{reset_list_html}'
         f'</div>'
         f'</article>'
     )
@@ -449,7 +460,7 @@ def build_platform_html(
 ) -> str:
     """
     构建平台配额 HTML。
-    - theme: 'shadcn' | 'mac' | 'md3'
+    - theme: 'shadcn' | 'mac' | 'md3' | 'winxp'
     - cards_per_row: 1..6
     - page: 当前页码
     - pages: 总页码
@@ -457,7 +468,7 @@ def build_platform_html(
     """
     settings = get_render_settings_adapter()
     actual_theme = (theme or settings.get("theme") or "shadcn").lower()
-    if actual_theme not in {"shadcn", "mac", "md3"}:
+    if actual_theme not in {"shadcn", "mac", "md3", "winxp"}:
         actual_theme = "shadcn"
 
     cols = cards_per_row or settings.get("cards_per_row", DEFAULT_CARDS_PER_ROW)
@@ -493,6 +504,24 @@ def build_platform_html(
             f'</div>'
             f'<div class="grid">{grid_content}</div>'
             f'{page_note}'
+            f'</div>'
+        )
+    elif actual_theme == "winxp":
+        sheet_inner = (
+            f'<div class="xp-window">'
+            f'<div class="xp-titlebar">'
+            f'<div class="xp-titlebar-icon"></div>'
+            f'<div class="xp-titlebar-text">{html.escape(section.title)} 配额监控</div>'
+            f'<div class="xp-titlebar-controls">'
+            f'<button class="xp-btn-ctrl xp-btn-min" aria-label="Minimize"></button>'
+            f'<button class="xp-btn-ctrl xp-btn-max" aria-label="Maximize"></button>'
+            f'<button class="xp-btn-ctrl xp-btn-close" aria-label="Close"></button>'
+            f'</div>'
+            f'</div>'
+            f'<div class="xp-window-body">'
+            f'<div class="grid">{grid_content}</div>'
+            f'{page_note}'
+            f'</div>'
             f'</div>'
         )
     else:

@@ -17,8 +17,9 @@ THEME_ALIASES: dict[str, str] = {
     "shadcn": "shadcn",
     "mac": "mac",
     "md3": "md3",
+    "winxp": "winxp",
 }
-ALLOWED_THEMES: tuple[str, ...] = ("shadcn", "mac", "md3")
+ALLOWED_THEMES: tuple[str, ...] = ("shadcn", "mac", "md3", "winxp")
 MIN_CARDS_PER_ROW = 1
 MAX_CARDS_PER_ROW = 6
 

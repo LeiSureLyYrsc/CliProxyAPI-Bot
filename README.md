@@ -119,8 +119,8 @@ Bot 与 CPA 不在同一台机器时，CPA 需要 `remote-management.allow-remot
 | `cpa alias list [--disabled]` | 列出账号显示别名。默认隐藏已禁用账号 |
 | `cpa alias set <渠道> <邮箱> <别名>` | 为指定渠道账号设置别名；同邮箱跨渠道必须带渠道 |
 | `cpa alias del <查询词>` | 删除别名 |
-| `cpa theme` | 查看当前额度图主题（`shadcn` / `mac` / `md3`） |
-| `cpa theme set <default\|mac\|md3>` | 设置额度图主题（`default` 对应 `shadcn`） |
+| `cpa theme` | 查看当前额度图主题（`shadcn` / `mac` / `md3` / `winxp`） |
+| `cpa theme set <default\|mac\|md3\|winxp>` | 设置额度图主题（`default` 对应 `shadcn`） |
 | `cpa card` | 查看当前卡片排版设置 |
 | `cpa card row <1..6>` | 设置每行展示卡片数 |
 | `cpa quota` | 查本机客户端（默认名 `Server`）上游额度，每个平台一张合并卡片图 |
@@ -160,7 +160,7 @@ CLIProxyAPI **没有**账号池额度聚合接口。`GET /auth-files` 只有健�
 
 ### 渲染设置与分页
 
-- 额度图支持 3 种主题：`shadcn`（现代卡片，默认）、`mac`（macOS 拟物窗口带红绿灯控制台与毛玻璃）、`md3`（Material Design 3 药丸胶囊风格）。
+- 额度图支持 4 种主题：`shadcn`（现代卡片，默认）、`mac`（macOS 拟物窗口带红绿灯控制台与毛玻璃）、`md3`（Material Design 3 药丸胶囊风格）、`winxp`（Windows XP Luna 蓝色窗口、CSS 重建 Bliss 背景与分段绿色进度条）。
 - 每行卡片数支持 `1..6`（默认 4）。
 - **运行时配置存储**：主题与排版设置直接保存在别名文件同级目录的 `cpa_render_settings.json`（推导自 `CPA_ALIAS_FILE` 目录），通过 `/cpa theme set` 与 `/cpa card row` 即时修改并持久化保存，无需且不支持主题/排版环境变量。文件采用原子写入并保留未知扩展字段，损坏时自动回退默认值。
 - **分页布局**：基于 2 行网格分页。第 1 页因首单元格放置 Summary 卡片，容纳 `2 * 列数 - 1` 张账号卡片；第 2 页及后续页每页容纳 `2 * 列数` 张卡片。

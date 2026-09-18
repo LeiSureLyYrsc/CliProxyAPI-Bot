@@ -546,27 +546,128 @@ def calculate_total_reset_credits(accounts: list[AccountQuota]) -> int | None:
     return total if found else None
 
 
-def extract_earliest_reset_seconds(accounts: list[AccountQuota]) -> float | None:
-    """计算平台下所有账号窗口中最快的未来刷新倒计时秒数。"""
-    earliest: float | None = None
-    now = time.time()
+def _normalize_epoch_timestamp(val: float, now: float) -> float:
+    # If val is in milliseconds (e.g. > 1e11 or if val is > now * 500 when now > 1e8)
+    if val > 1e11:
+        return val / 1000.0
+    # Also handle relative or custom millisecond stamps when now is small (e.g. in synthetic tests where now=10000)
+    if now < 1e8 and val > 1e6:
+        return val / 1000.0
+    return val
+
+
+def _classify_model_category(window_id: str, window_label: str = "") -> str:
+    wid = (window_id or "").strip().lower()
+    lbl = (window_label or "").strip().lower()
+
+    if wid.startswith("gemini-") or lbl.startswith("gemini"):
+        return "Gemini"
+    if (
+        wid.startswith("claude-gpt-")
+        or lbl.startswith("claude-gpt")
+        or lbl.startswith("claude/gpt")
+    ):
+        return "Claude/GPT"
+    if wid.startswith("code-") or lbl.startswith("codex") or lbl.startswith("code"):
+        return "Codex"
+    if (
+        wid in {"five_hour", "extra", "iguana_necktie"}
+        or wid.startswith("seven_day")
+        or lbl.startswith("claude")
+    ):
+        return "Claude"
+    if wid.startswith("grok-") or wid == "billing" or "grok" in lbl or "xai" in lbl:
+        return "xAI"
+    if wid.startswith("limit-") or wid == "usage" or "kimi" in lbl:
+        return "Kimi"
+
+    # Fallback to normalized window label or id or 其他
+    fallback = (window_label or window_id or "").strip()
+    return fallback if fallback else "其他"
+
+
+def _classify_period_category(window_id: str, window_label: str = "") -> str:
+    blob = f"{window_id} {window_label}".strip().lower()
+    if any(token in blob for token in ("5h", "five", "hour", "滚动", "rolling", "用量", "usage")):
+        return "小时额度"
+    if any(token in blob for token in ("week", "weekly", "7d", "seven", "周")):
+        return "周额度"
+    if any(token in blob for token in ("month", "monthly", "30d", "月")):
+        return "月额度"
+    return "其他额度"
+
+
+_MODEL_CATEGORY_ORDER = ("Gemini", "Claude/GPT", "Codex", "Claude", "xAI", "Kimi")
+_PERIOD_CATEGORY_ORDER = ("小时额度", "周额度", "月额度", "其他额度")
+
+
+def calculate_grouped_earliest_resets(
+    accounts: list[AccountQuota],
+    now: float | None = None,
+) -> list[dict[str, Any]]:
+    """按模型分类与周期分类计算所有账号窗口中最早的未来刷新倒计时。"""
+    current_time = time.time() if now is None else float(now)
+    # Map (model_category, period_category) -> best_dict
+    grouped: dict[tuple[str, str], dict[str, Any]] = {}
+
     for account in accounts:
         for window in account.windows:
+            diff: float | None = None
             reset_at = getattr(window, "reset_at", None)
             if reset_at is not None and isinstance(reset_at, (int, float)) and not isinstance(reset_at, bool):
-                # 归一化毫秒时间戳
-                ts = float(reset_at)
-                epoch = ts / 1000.0 if ts > 1e12 else ts
-                diff = epoch - now
-                if diff > 0 and (earliest is None or diff < earliest):
-                    earliest = diff
-                # 如果 reset_at 存在且有效（即使已过去），不回退到可能陈旧的 reset_label
-                continue
-            if window.reset_label and window.reset_label != "-" and "过期" not in window.reset_label:
+                epoch = _normalize_epoch_timestamp(float(reset_at), current_time)
+                val = epoch - current_time
+                if val > 0:
+                    diff = val
+                else:
+                    # Numeric reset_at exists but in the past; do not fall back to stale reset_label
+                    continue
+            elif window.reset_label and window.reset_label != "-" and "过期" not in window.reset_label:
                 sec = _parse_reset_label_duration(window.reset_label)
-                if sec is not None and sec > 0 and (earliest is None or sec < earliest):
-                    earliest = sec
-    return earliest
+                if sec is not None and sec > 0:
+                    diff = sec
+
+            if diff is None or diff <= 0:
+                continue
+
+            model_cat = _classify_model_category(window.id, window.label)
+            period_cat = _classify_period_category(window.id, window.label)
+            key = (model_cat, period_cat)
+
+            if key not in grouped or diff < grouped[key]["seconds"]:
+                grouped[key] = {
+                    "model": model_cat,
+                    "period": period_cat,
+                    "seconds": diff,
+                    "window_id": window.id,
+                    "window_label": window.label,
+                }
+
+    model_rank = {name: idx for idx, name in enumerate(_MODEL_CATEGORY_ORDER)}
+    period_rank = {name: idx for idx, name in enumerate(_PERIOD_CATEGORY_ORDER)}
+
+    def _sort_key(item: dict[str, Any]) -> tuple[int, str, int, str]:
+        m = item["model"]
+        p = item["period"]
+        return (
+            model_rank.get(m, len(_MODEL_CATEGORY_ORDER)),
+            m,
+            period_rank.get(p, len(_PERIOD_CATEGORY_ORDER)),
+            p,
+        )
+
+    return sorted(grouped.values(), key=_sort_key)
+
+
+def extract_earliest_reset_seconds(
+    accounts: list[AccountQuota],
+    now: float | None = None,
+) -> float | None:
+    """计算平台下所有账号窗口中最快的未来刷新倒计时秒数。"""
+    grouped = calculate_grouped_earliest_resets(accounts, now=now)
+    if not grouped:
+        return None
+    return min(item["seconds"] for item in grouped)
 
 
 def _parse_reset_label_duration(text: str) -> float | None:

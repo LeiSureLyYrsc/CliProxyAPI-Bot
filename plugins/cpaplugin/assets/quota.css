@@ -217,6 +217,48 @@ html, body {
   flex-shrink: 0;
 }
 
+.summary-reset-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.summary-reset-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px 6px;
+  font-size: 11px;
+  line-height: 1.3;
+  padding: 3px 6px;
+  border-radius: 4px;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.summary-reset-kind {
+  font-weight: 600;
+  min-width: 0;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 1 auto;
+}
+
+.summary-reset-time {
+  min-width: 0;
+  max-width: 100%;
+  word-break: break-word;
+  flex: 1 1 auto;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 .summary-reset-banner {
   display: flex;
   align-items: center;
@@ -459,6 +501,20 @@ html, body {
   font-weight: 600;
 }
 
+.theme-shadcn .summary-reset-row {
+  background: #172554;
+  color: #93c5fd;
+  border: 1px solid #1e40af;
+}
+
+.theme-shadcn .summary-reset-kind {
+  color: #bfdbfe;
+}
+
+.theme-shadcn .summary-reset-time {
+  color: #60a5fa;
+}
+
 .theme-shadcn .summary-reset-banner {
   background: #172554;
   color: #93c5fd;
@@ -660,6 +716,21 @@ html, body {
   border-color: rgba(80, 250, 123, 0.4);
 }
 
+.theme-mac .summary-reset-row {
+  background: rgba(139, 233, 253, 0.08);
+  color: var(--mac-cyan);
+  border: 1px solid rgba(139, 233, 253, 0.2);
+  font-family: var(--font-mono);
+}
+
+.theme-mac .summary-reset-kind {
+  color: var(--mac-yellow);
+}
+
+.theme-mac .summary-reset-time {
+  color: var(--mac-cyan);
+}
+
 .theme-mac .summary-reset-banner {
   background: rgba(139, 233, 253, 0.1);
   color: var(--mac-cyan);
@@ -813,6 +884,22 @@ html, body {
   font-weight: 600;
 }
 
+.theme-md3 .summary-reset-row {
+  background: var(--md3-tertiary-container);
+  color: var(--md3-on-tertiary-container);
+  border-radius: 8px;
+  padding: 4px 8px;
+}
+
+.theme-md3 .summary-reset-kind {
+  color: var(--md3-on-tertiary-container);
+}
+
+.theme-md3 .summary-reset-time {
+  color: #ffd8e4;
+  font-weight: 600;
+}
+
 .theme-md3 .summary-reset-banner {
   background: var(--md3-tertiary-container);
   color: var(--md3-on-tertiary-container);
@@ -856,5 +943,382 @@ html, body {
   color: var(--md3-on-error-container);
   padding: 8px 10px;
   border-radius: 8px;
+  font-size: 11px;
+}
+
+
+/* =========================================================
+   THEME 4: WINDOWS XP (Luna Blue Theme with CSS Bliss Backdrop)
+   ========================================================= */
+.theme-winxp {
+  --xp-blue-dark: #00138c;
+  --xp-blue-main: #0055ea;
+  --xp-surface: #ece9d8;
+  --xp-card-bg: #f7f6f0;
+  --xp-group-border: #d0cdc0;
+  --xp-text: #000000;
+  --xp-text-dim: #444444;
+  --xp-sunken-border: #7f9db9;
+  --xp-banner-bg: #ffffe1;
+  --xp-banner-border: #e2c822;
+  --xp-font: Tahoma, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+
+  font-family: var(--xp-font);
+  color: var(--xp-text);
+  padding: 18px;
+  box-sizing: border-box;
+
+  /* Bliss Wallpaper CSS Recreation (Sky, Clouds, Rolling Hills) */
+  background:
+    radial-gradient(ellipse 120% 70% at 75% 100%, #3e8824 0%, #4da528 28%, #7ecb47 55%, transparent 68%),
+    radial-gradient(ellipse 140% 60% at 20% 100%, #31741b 0%, #479e23 35%, #73c33d 60%, transparent 72%),
+    radial-gradient(circle at 50% 20%, rgba(255, 255, 255, 0.8) 0%, rgba(255, 255, 255, 0.2) 22%, transparent 45%),
+    linear-gradient(to bottom, #1970e2 0%, #4396f4 35%, #88c2fb 60%, #c4e4fd 75%, #59ab2d 88%, #2e731b 100%);
+  background-attachment: local;
+}
+
+.theme-winxp .xp-window {
+  background: var(--xp-surface);
+  border-radius: 8px 8px 0 0;
+  border: 3px solid var(--xp-blue-main);
+  border-top: none;
+  box-shadow: 2px 5px 16px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.theme-winxp .xp-titlebar {
+  background: linear-gradient(
+    to bottom,
+    #0058ee 0%,
+    #3593ff 4%,
+    #288eff 6%,
+    #127dff 8%,
+    #036ffc 10%,
+    #0262ee 14%,
+    #0057e5 20%,
+    #0054e3 24%,
+    #0055e7 56%,
+    #0054e1 66%,
+    #0041d0 79%,
+    #003dd0 86%,
+    #0030c1 90%,
+    #002ac0 94%,
+    #0028be 100%
+  );
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 6px 0 8px;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  box-sizing: border-box;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+
+.theme-winxp .xp-titlebar-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  background: radial-gradient(circle, #ffffff 20%, #4396f4 70%, #002ac0 100%);
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow: inset 0 0 2px rgba(0, 0, 0, 0.4);
+}
+
+.theme-winxp .xp-titlebar-text {
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+  text-shadow: 1px 1px 2px #001a70;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  max-width: 100%;
+  flex: 1 1 auto;
+  letter-spacing: 0.02em;
+}
+
+.theme-winxp .xp-titlebar-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.theme-winxp .xp-btn-ctrl {
+  width: 21px;
+  height: 21px;
+  border-radius: 3px;
+  border: 1px solid #ffffff;
+  box-sizing: border-box;
+  position: relative;
+  cursor: default;
+  outline: none;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), 1px 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.theme-winxp .xp-btn-min,
+.theme-winxp .xp-btn-max {
+  background: linear-gradient(to bottom, #4396f4 0%, #176fe8 50%, #004ecc 100%);
+}
+
+.theme-winxp .xp-btn-min::after {
+  content: "";
+  display: block;
+  width: 8px;
+  height: 2px;
+  background: #ffffff;
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.3);
+  margin-top: 6px;
+}
+
+.theme-winxp .xp-btn-max::after {
+  content: "";
+  display: block;
+  width: 9px;
+  height: 7px;
+  border: 2px solid #ffffff;
+  border-top-width: 3px;
+  box-sizing: border-box;
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.3);
+}
+
+.theme-winxp .xp-btn-close {
+  background: linear-gradient(to bottom, #f27b68 0%, #e03b22 50%, #c41e0a 100%);
+}
+
+.theme-winxp .xp-btn-close::before,
+.theme-winxp .xp-btn-close::after {
+  content: "";
+  position: absolute;
+  width: 10px;
+  height: 2px;
+  background: #ffffff;
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.3);
+}
+
+.theme-winxp .xp-btn-close::before {
+  transform: rotate(45deg);
+}
+
+.theme-winxp .xp-btn-close::after {
+  transform: rotate(-45deg);
+}
+
+.theme-winxp .xp-window-body {
+  padding: 12px;
+  background: var(--xp-surface);
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+/* WinXP Card: 3D GroupBox / Task Panel */
+.theme-winxp .card {
+  background: var(--xp-card-bg);
+  border: 1px solid var(--xp-group-border);
+  border-radius: 4px;
+  box-shadow: inset 1px 1px 0 #ffffff, 1px 1px 2px rgba(0, 0, 0, 0.08);
+  padding: 10px;
+}
+
+.theme-winxp .summary-card {
+  background: #ffffff;
+  border: 1px solid #7ba2e7;
+  box-shadow: inset 1px 1px 0 #ffffff, 0 1px 4px rgba(32, 70, 160, 0.15);
+}
+
+.theme-winxp .card-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #000000;
+}
+
+.theme-winxp .summary-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #0c327d;
+}
+
+.theme-winxp .summary-account-count {
+  font-size: 11px;
+  color: #333333;
+  margin-left: auto;
+  background: #eef3fc;
+  padding: 1px 6px;
+  border: 1px solid #b2c9f4;
+  border-radius: 3px;
+}
+
+.theme-winxp .brand-badge-fallback {
+  background: linear-gradient(to bottom, #4396f4, #0055ea);
+  color: #ffffff;
+  border-radius: 3px;
+  border: 1px solid #002ac0;
+}
+
+/* XP Badges (Sunken bevel & Glossy pills) */
+.theme-winxp .badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  background: #ffffff;
+  color: #000000;
+  border: 1px solid var(--xp-sunken-border);
+  box-shadow: inset 1px 1px 1px rgba(0, 0, 0, 0.1);
+}
+
+.theme-winxp .badge-plan {
+  background: linear-gradient(to bottom, #e3efff, #c7dcfc);
+  color: #0c3882;
+  border-color: #6e97db;
+}
+
+.theme-winxp .badge-cooling,
+.theme-winxp .badge-warn {
+  background: linear-gradient(to bottom, #fff4cc, #ffe082);
+  color: #8c5200;
+  border-color: #e5a93b;
+}
+
+.theme-winxp .badge-disabled {
+  background: #eae8dc;
+  color: #777777;
+  border-color: #bbbaa8;
+}
+
+.theme-winxp .badge-credits {
+  background: linear-gradient(to bottom, #dcfce7, #86efac);
+  color: #14532d;
+  border-color: #22c55e;
+}
+
+.theme-winxp .summary-reset-row {
+  background: var(--xp-banner-bg);
+  color: #5c4300;
+  border: 1px solid var(--xp-banner-border);
+  border-radius: 3px;
+  box-shadow: 1px 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+.theme-winxp .summary-reset-kind {
+  color: #8c5200;
+}
+
+.theme-winxp .summary-reset-time {
+  color: #000000;
+}
+
+.theme-winxp .summary-reset-banner {
+  background: var(--xp-banner-bg);
+  color: #5c4300;
+  border: 1px solid var(--xp-banner-border);
+  border-radius: 3px;
+  box-shadow: 1px 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+/* Authentic Windows XP Green Candy Progress Bar */
+.theme-winxp .progress-track {
+  background: #ffffff;
+  border: 1px solid var(--xp-sunken-border);
+  border-radius: 2px;
+  box-shadow: inset 1px 1px 2px rgba(0, 0, 0, 0.22);
+  height: 12px;
+  padding: 1px;
+}
+
+.theme-winxp .progress-fill {
+  border-radius: 1px;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      transparent 0px,
+      transparent 7px,
+      #ffffff 7px,
+      #ffffff 9px
+    ),
+    linear-gradient(
+      to bottom,
+      #9bfd8a 0%,
+      #35da24 20%,
+      #13ab02 50%,
+      #29c719 80%,
+      #86fb73 100%
+    );
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8), inset 0 -1px 0 rgba(0, 0, 0, 0.2);
+}
+
+.theme-winxp .bar-med .progress-fill {
+  background:
+    repeating-linear-gradient(
+      90deg,
+      transparent 0px,
+      transparent 7px,
+      #ffffff 7px,
+      #ffffff 9px
+    ),
+    linear-gradient(
+      to bottom,
+      #ffefa8 0%,
+      #ffca28 20%,
+      #f57f17 50%,
+      #ffa000 80%,
+      #ffecb3 100%
+    );
+}
+
+.theme-winxp .bar-low .progress-fill {
+  background:
+    repeating-linear-gradient(
+      90deg,
+      transparent 0px,
+      transparent 7px,
+      #ffffff 7px,
+      #ffffff 9px
+    ),
+    linear-gradient(
+      to bottom,
+      #ffcdd2 0%,
+      #ef5350 20%,
+      #c62828 50%,
+      #d32f2f 80%,
+      #ffcdd2 100%
+    );
+}
+
+.theme-winxp .summary-stat-label {
+  color: #333333;
+}
+
+.theme-winxp .summary-stat-val .sum-pct {
+  color: #0c3882;
+  font-weight: 700;
+}
+
+.theme-winxp .page-note {
+  color: #555555;
+  font-size: 11px;
+}
+
+.theme-winxp .card-err-box {
+  background: #fde8e8;
+  border: 1px solid #f87171;
+  color: #991b1b;
+  padding: 6px 8px;
+  border-radius: 3px;
   font-size: 11px;
 }

@@ -166,7 +166,7 @@ cpa = on_alconna(
         ),
         Subcommand(
             "theme",
-            Subcommand("set", Args["name", str], help_text="设置额度图主题：cpa theme set default|mac|md3"),
+            Subcommand("set", Args["name", str], help_text="设置额度图主题：cpa theme set default|mac|md3|winxp"),
             help_text="查看或设置额度图主题",
         ),
         Subcommand(
@@ -258,8 +258,8 @@ def _cpa_help_text(providers: str) -> str:
             "【主题与排版】修改后立刻生效并持久化保存。",
             "  cpa theme",
             "    查看当前额度图主题。",
-            "  cpa theme set default|mac|md3",
-            "    设置额度图主题（default 对应 shadcn）。",
+            "  cpa theme set default|mac|md3|winxp",
+            "    设置额度图主题（default 对应 shadcn；winxp 为 Windows XP Luna 风格）。",
             "  cpa card",
             "    查看当前卡片排版设置。",
             "  cpa card row N",

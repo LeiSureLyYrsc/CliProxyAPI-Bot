@@ -21,6 +21,7 @@ from cpaplugin.quota import (
     _build_board,
     accounts_from_result,
     calculate_aggregate_windows,
+    calculate_grouped_earliest_resets,
     calculate_plan_distribution,
     calculate_total_reset_credits,
     count_codex_reset_credits,
@@ -64,6 +65,8 @@ class RenderSettingsTests(unittest.TestCase):
         self.assertEqual(get_render_settings().theme, "shadcn")
         set_theme("md3")
         self.assertEqual(get_render_settings().theme, "md3")
+        set_theme("winxp")
+        self.assertEqual(get_render_settings().theme, "winxp")
         with self.assertRaises(ValueError):
             set_theme("invalid_theme_name")
 
@@ -107,11 +110,11 @@ class RenderSettingsTests(unittest.TestCase):
             self.assertEqual(settings.extra.get("version"), 2)
 
             # Modify theme via API
-            set_theme("md3")
-            
+            set_theme("winxp")
+
             # Read back from disk directly
             saved_raw = json.loads(target_file.read_text(encoding="utf-8"))
-            self.assertEqual(saved_raw["theme"], "md3")
+            self.assertEqual(saved_raw["theme"], "winxp")
             self.assertEqual(saved_raw["cards_per_row"], 3)
             self.assertEqual(saved_raw["custom_theme_config"], {"accent": "blue"})
             self.assertEqual(saved_raw["version"], 2)
@@ -305,6 +308,120 @@ class AggregateHelpersTests(unittest.TestCase):
     def test_total_reset_credits(self) -> None:
         total = calculate_total_reset_credits(self.accounts)
         self.assertEqual(total, 5)
+
+    def test_grouped_earliest_resets_matrix_and_ordering(self) -> None:
+        fixed_now = 10000.0
+
+        # Construct accounts with multiple models and windows
+        # Gemini: hour (300s & 600s -> best 300s), week (1000s)
+        # Claude/GPT: hour (400s), week (1500s)
+        # Codex: hour (500s), week (2000s)
+        # Claude: hour (100s), week (2500s)
+        # xAI: week (800s)
+        # Kimi: hour (900s)
+        accounts = [
+            AccountQuota(
+                platform="antigravity",
+                name="ag1",
+                auth_index="ag1",
+                windows=[
+                    # Gemini hour: 300s
+                    QuotaWindow(id="gemini-5h", label="Gemini 5h", reset_at=fixed_now + 300),
+                    # Gemini week: 1000s
+                    QuotaWindow(id="gemini-week", label="Gemini 周", reset_at=fixed_now + 1000),
+                    # Claude/GPT hour: 400s
+                    QuotaWindow(id="claude-gpt-5h", label="Claude/GPT 5h", reset_at=fixed_now + 400),
+                ],
+            ),
+            AccountQuota(
+                platform="antigravity",
+                name="ag2",
+                auth_index="ag2",
+                windows=[
+                    # Gemini hour competing window with longer reset (600s), should pick 300s
+                    QuotaWindow(id="gemini-5h", label="Gemini 5h", reset_at=fixed_now + 600),
+                    # Claude/GPT week: 1500s
+                    QuotaWindow(id="claude-gpt-week", label="Claude/GPT 周", reset_at=fixed_now + 1500),
+                ],
+            ),
+            AccountQuota(
+                platform="codex",
+                name="cx1",
+                auth_index="cx1",
+                windows=[
+                    # Codex hour: ms timestamp
+                    QuotaWindow(id="code-5h", label="5h", reset_at=(fixed_now + 500) * 1000.0),
+                    # Codex week: 2000s
+                    QuotaWindow(id="code-7d", label="周", reset_at=fixed_now + 2000),
+                ],
+            ),
+            AccountQuota(
+                platform="claude",
+                name="cl1",
+                auth_index="cl1",
+                windows=[
+                    # Claude hour via label: 100s (1m 40s)
+                    QuotaWindow(id="five_hour", label="5h", reset_label="1m"),
+                    # Claude week: 2500s
+                    QuotaWindow(id="seven_day", label="7d", reset_at=fixed_now + 2500),
+                ],
+            ),
+            AccountQuota(
+                platform="xai",
+                name="x1",
+                auth_index="x1",
+                windows=[
+                    # xAI week via billing: 800s
+                    QuotaWindow(id="billing", label="周", reset_at=fixed_now + 800),
+                ],
+            ),
+            AccountQuota(
+                platform="kimi",
+                name="km1",
+                auth_index="km1",
+                windows=[
+                    # Kimi hour via usage/reset_label: 15m -> 900s
+                    QuotaWindow(id="usage", label="用量", reset_label="15m"),
+                ],
+            ),
+        ]
+
+        resets = calculate_grouped_earliest_resets(accounts, now=fixed_now)
+
+        # Expected groups in strict deterministic order:
+        # 1. Gemini 小时额度 (300)
+        # 2. Gemini 周额度 (1000)
+        # 3. Claude/GPT 小时额度 (400)
+        # 4. Claude/GPT 周额度 (1500)
+        # 5. Codex 小时额度 (500)
+        # 6. Codex 周额度 (2000)
+        # 7. Claude 小时额度 (60 - from 1m)
+        # 8. Claude 周额度 (2500)
+        # 9. xAI 周额度 (800)
+        # 10. Kimi 小时额度 (900)
+        expected_tuples = [
+            ("Gemini", "小时额度", 300.0),
+            ("Gemini", "周额度", 1000.0),
+            ("Claude/GPT", "小时额度", 400.0),
+            ("Claude/GPT", "周额度", 1500.0),
+            ("Codex", "小时额度", 500.0),
+            ("Codex", "周额度", 2000.0),
+            ("Claude", "小时额度", 60.0),
+            ("Claude", "周额度", 2500.0),
+            ("xAI", "周额度", 800.0),
+            ("Kimi", "小时额度", 900.0),
+        ]
+
+        self.assertEqual(len(resets), len(expected_tuples))
+        for actual, (exp_model, exp_period, exp_sec) in zip(resets, expected_tuples):
+            self.assertEqual(actual["model"], exp_model)
+            self.assertEqual(actual["period"], exp_period)
+            self.assertAlmostEqual(actual["seconds"], exp_sec, places=1)
+            self.assertIn("window_id", actual)
+            self.assertIn("window_label", actual)
+
+        # Compatibility helper extract_earliest_reset_seconds should pick the global min (Claude hour: 60s)
+        self.assertAlmostEqual(extract_earliest_reset_seconds(accounts, now=fixed_now), 60.0, places=1)
 
     def test_earliest_reset_seconds(self) -> None:
         earliest = extract_earliest_reset_seconds(self.accounts)

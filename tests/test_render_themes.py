@@ -70,17 +70,26 @@ class RenderThemesAndFeaturesTests(unittest.TestCase):
         )
 
     def test_theme_markers_and_components(self) -> None:
-        for theme in ["shadcn", "mac", "md3"]:
+        for theme in ["shadcn", "mac", "md3", "winxp"]:
             html_doc = build_platform_html(self.sample_section, theme=theme)
             self.assertIn(f"theme-{theme}", html_doc)
             if theme == "mac":
-                self.assertIn("sheet-window", html_doc)
-                self.assertIn("mac-titlebar", html_doc)
-                self.assertIn("mac-controls", html_doc)
+                self.assertIn('<div class="sheet-window">', html_doc)
+                self.assertIn('<div class="mac-titlebar">', html_doc)
+                self.assertIn('<div class="mac-controls">', html_doc)
             elif theme == "md3":
                 self.assertIn("theme-md3", html_doc)
             elif theme == "shadcn":
                 self.assertIn("theme-shadcn", html_doc)
+            elif theme == "winxp":
+                self.assertIn("theme-winxp", html_doc)
+                self.assertIn('<div class="xp-window">', html_doc)
+                self.assertIn('<div class="xp-titlebar">', html_doc)
+                self.assertIn("xp-btn-ctrl", html_doc)
+                self.assertIn("xp-btn-close", html_doc)
+                self.assertIn('<div class="xp-window-body">', html_doc)
+                self.assertNotIn('<div class="mac-titlebar">', html_doc)
+                self.assertNotIn('<div class="sheet-window">', html_doc)
 
     def test_icon_data_uris_and_no_remote_urls(self) -> None:
         platforms = ["claude", "codex", "antigravity", "kimi", "xai", "gemini-cli"]
@@ -131,10 +140,54 @@ class RenderThemesAndFeaturesTests(unittest.TestCase):
         self.assertIn("720%", html_doc)
         self.assertIn("均 80%", html_doc)
         self.assertIn("9号", html_doc)
-        # Earliest reset: 2h15m -> 最快于 2小时15分 后刷新额度
+        # Multiple grouped resets
+        self.assertIn("summary-reset-list", html_doc)
+        self.assertIn("summary-reset-row", html_doc)
+        self.assertIn("Claude · 小时额度：", html_doc)
+        self.assertIn("Claude · 周额度：", html_doc)
         self.assertIn("最快于 2小时15分 后刷新额度", html_doc)
+        self.assertIn("最快于 3天12小时 后刷新额度", html_doc)
         # Total reset credits: 5 -> 主动刷新次数: 5
         self.assertIn("主动刷新次数: 5", html_doc)
+
+    def test_grouped_earliest_resets_multi_models_and_periods(self) -> None:
+        mixed_accounts = [
+            AccountQuota(
+                platform="gemini-cli",
+                name="gemini-acc",
+                auth_index="1",
+                windows=[
+                    QuotaWindow(id="gemini-5h", label="5h", remaining_percent=20.0, reset_label="2h15m"),
+                    QuotaWindow(id="gemini-week", label="1w", remaining_percent=50.0, reset_label="1d3h"),
+                ],
+            ),
+            AccountQuota(
+                platform="claude",
+                name="claude-gpt-acc",
+                auth_index="2",
+                windows=[
+                    QuotaWindow(id="claude-gpt-5h", label="5h", remaining_percent=10.0, reset_label="45m"),
+                    QuotaWindow(id="claude-gpt-week", label="1w", remaining_percent=30.0, reset_label="2d"),
+                ],
+            ),
+        ]
+        sec = PlatformQuota(
+            platform="antigravity",
+            title="Antigravity",
+            accounts=mixed_accounts,
+            window_remain_sum={},
+            window_remain_count={},
+        )
+        html_doc = build_platform_html(sec, mixed_accounts, page=1, pages=1)
+        self.assertIn("summary-reset-list", html_doc)
+        self.assertIn("Gemini · 小时额度：", html_doc)
+        self.assertIn("最快于 2小时15分 后刷新额度", html_doc)
+        self.assertIn("Gemini · 周额度：", html_doc)
+        self.assertIn("最快于 1天3小时 后刷新额度", html_doc)
+        self.assertIn("Claude/GPT · 小时额度：", html_doc)
+        self.assertIn("最快于 45分 后刷新额度", html_doc)
+        self.assertIn("Claude/GPT · 周额度：", html_doc)
+        self.assertIn("最快于 2天 后刷新额度", html_doc)
 
     def test_account_card_features(self) -> None:
         html_doc = build_platform_html(self.sample_section, self.sample_accounts[:7], page=1, pages=2)
@@ -207,7 +260,7 @@ class ChromiumScreenshotIntegrationTests(unittest.IsolatedAsyncioTestCase):
             window_labels={"code-5h": "5h", "code-7d": "7d"},
         )
 
-        for theme in ["shadcn", "mac", "md3"]:
+        for theme in ["shadcn", "mac", "md3", "winxp"]:
             html_doc = build_platform_html(section, theme=theme, cards_per_row=4)
             self.assertTrue(len(html_doc) > 500)
             from cpaplugin.render import _screenshot
@@ -282,7 +335,7 @@ class ChromiumScreenshotIntegrationTests(unittest.IsolatedAsyncioTestCase):
         page = await context.new_page()
 
         try:
-            for theme in ["shadcn", "mac", "md3"]:
+            for theme in ["shadcn", "mac", "md3", "winxp"]:
                 for cols in range(1, 7):
                     paginated = paginate_accounts(stress_accounts, cards_per_row=cols, rows_per_page=2)
                     for page_idx, page_accs in enumerate(paginated, start=1):
@@ -326,7 +379,7 @@ class ChromiumScreenshotIntegrationTests(unittest.IsolatedAsyncioTestCase):
                         sheet_metrics = await page.evaluate(
                             """() => {
                             const sheet = document.querySelector('.sheet');
-                            const sheetWin = document.querySelector('.sheet-window');
+                            const sheetWin = document.querySelector('.sheet-window') || document.querySelector('.xp-window');
                             const target = sheetWin || sheet;
                             return {
                                 clientWidth: target.clientWidth,
