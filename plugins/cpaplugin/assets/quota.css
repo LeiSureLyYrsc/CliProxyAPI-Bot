@@ -1322,3 +1322,481 @@ html, body {
   border-radius: 3px;
   font-size: 11px;
 }
+
+
+/* =========================================================
+   THEME 5: WINDOWS 7 (Aero Glass Theme with CSS Aurora Backdrop)
+   ========================================================= */
+.theme-win7 {
+  --w7-font: "Segoe UI", "PingFang SC", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, sans-serif;
+  --w7-glass-border: rgba(255, 255, 255, 0.45);
+  --w7-glass-outer-border: rgba(14, 43, 75, 0.65);
+  --w7-surface: rgba(230, 240, 252, 0.55);
+  --w7-card-bg: rgba(255, 255, 255, 0.48);
+  --w7-card-border: rgba(150, 185, 225, 0.82);
+  --w7-text: #0f1c2e;
+  --w7-text-dim: #3a536b;
+  --w7-sunken-border: #7f99ad;
+  --w7-banner-bg: rgba(215, 235, 255, 0.75);
+  --w7-banner-border: #6daae0;
+  --w7-glow-color: rgba(255, 255, 255, 0.9);
+
+  font-family: var(--w7-font);
+  color: var(--w7-text);
+  padding: 22px;
+  box-sizing: border-box;
+  position: relative;
+  isolation: isolate;
+  background: linear-gradient(175deg, #1e568a 0%, #12406c 26%, #0a2542 60%, #041020 100%);
+}
+
+/* Aurora ribbons live in a pseudo-layer so `backdrop-filter` on descendants
+   can blur these sharp high-contrast bands. */
+.theme-win7::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    linear-gradient(118deg,
+      transparent 0%, transparent 30%,
+      rgba(170, 245, 238, 0.85) 34%, rgba(170, 245, 238, 0.85) 37%,
+      rgba(45, 195, 255, 0.8) 37%, rgba(45, 195, 255, 0.8) 45%,
+      rgba(15, 100, 225, 0.85) 45%, rgba(15, 100, 225, 0.85) 53%,
+      transparent 53%, transparent 100%),
+    linear-gradient(62deg,
+      transparent 0%, transparent 42%,
+      rgba(120, 240, 205, 0.75) 46%, rgba(120, 240, 205, 0.75) 48%,
+      rgba(25, 155, 240, 0.8) 48%, rgba(25, 155, 240, 0.8) 56%,
+      transparent 56%, transparent 100%),
+    radial-gradient(ellipse 55% 28% at 50% 0%, rgba(240, 252, 255, 1) 0%, rgba(145, 225, 255, 0.6) 38%, transparent 66%),
+    radial-gradient(ellipse 42% 34% at 78% 88%, rgba(45, 190, 245, 0.9) 0%, rgba(10, 85, 175, 0.75) 42%, transparent 72%),
+    radial-gradient(ellipse 50% 40% at 12% 92%, rgba(28, 170, 225, 0.9) 0%, rgba(6, 58, 135, 0.8) 46%, transparent 76%);
+  background-attachment: local;
+}
+
+/* Windows 7 Aero Glass Window Container */
+.theme-win7 .w7-window {
+  border-radius: 8px;
+  overflow: hidden;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+
+  /* Glass Outer Frame fallback (opaque gradient) */
+  background: linear-gradient(
+    to bottom,
+    rgba(145, 190, 235, 0.62) 0%,
+    rgba(95, 150, 210, 0.52) 32px,
+    rgba(70, 125, 190, 0.48) 100%
+  );
+  border: 1px solid var(--w7-glass-outer-border);
+  box-shadow:
+    0 12px 35px rgba(0, 0, 0, 0.65),
+    0 0 0 1px rgba(255, 255, 255, 0.55) inset,
+    0 1px 3px rgba(255, 255, 255, 0.8) inset,
+    0 0 15px rgba(130, 200, 255, 0.45);
+}
+
+@supports (backdrop-filter: blur(10px)) or (-webkit-backdrop-filter: blur(10px)) {
+  .theme-win7 .w7-window {
+    background: linear-gradient(
+      to bottom,
+      rgba(215, 235, 255, 0.22) 0%,
+      rgba(150, 195, 240, 0.16) 30px,
+      rgba(90, 150, 215, 0.12) 100%
+    );
+    backdrop-filter: blur(14px) saturate(175%);
+    -webkit-backdrop-filter: blur(14px) saturate(175%);
+  }
+
+  .theme-win7 .w7-titlebar {
+    backdrop-filter: blur(10px) saturate(160%);
+    -webkit-backdrop-filter: blur(10px) saturate(160%);
+  }
+
+  .theme-win7 .w7-window-body {
+    backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+  }
+
+  .theme-win7 .card {
+    backdrop-filter: blur(10px) saturate(150%);
+    -webkit-backdrop-filter: blur(10px) saturate(150%);
+  }
+}
+
+/* Titlebar */
+.theme-win7 .w7-titlebar {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 4px 0 10px;
+  user-select: none;
+  position: relative;
+  background: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.24) 0%,
+    rgba(210, 230, 250, 0.12) 50%,
+    rgba(160, 200, 240, 0.14) 100%
+  );
+}
+
+/* Subtle glass specular highlight along titlebar top */
+.theme-win7 .w7-titlebar::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 50%;
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.65) 0%, rgba(255, 255, 255, 0.1) 100%);
+  pointer-events: none;
+}
+
+/* Titlebar Abstract CSS Window Icon */
+.theme-win7 .w7-titlebar-icon {
+  width: 16px;
+  height: 16px;
+  margin-right: 8px;
+  flex-shrink: 0;
+  position: relative;
+  background: linear-gradient(135deg, #4fc3f7 0%, #0288d1 100%);
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+.theme-win7 .w7-titlebar-icon::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  right: 3px;
+  bottom: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 1px;
+}
+
+.theme-win7 .w7-titlebar-text {
+  flex: 1;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #0c1826;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* Windows 7 Aero White Glow Effect around title text */
+  text-shadow:
+    0 0 8px rgba(255, 255, 255, 0.95),
+    0 0 14px rgba(255, 255, 255, 0.85),
+    0 1px 2px rgba(255, 255, 255, 0.9);
+}
+
+/* Titlebar Control Buttons */
+.theme-win7 .w7-titlebar-controls {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  margin-left: 8px;
+  margin-top: -1px;
+}
+
+.theme-win7 .w7-btn-ctrl {
+  width: 28px;
+  height: 19px;
+  border-radius: 2px;
+  border: 1px solid rgba(20, 60, 100, 0.5);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.8),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.15),
+    0 1px 2px rgba(0, 0, 0, 0.25);
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: default;
+  outline: none;
+  padding: 0;
+  box-sizing: border-box;
+  background: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.75) 0%,
+    rgba(220, 235, 250, 0.6) 45%,
+    rgba(180, 210, 240, 0.55) 50%,
+    rgba(205, 230, 255, 0.7) 100%
+  );
+}
+
+.theme-win7 .w7-btn-min::before {
+  content: "";
+  width: 8px;
+  height: 2px;
+  background: #1e3a5f;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.8);
+  margin-top: 6px;
+}
+
+.theme-win7 .w7-btn-max::before {
+  content: "";
+  width: 9px;
+  height: 8px;
+  border: 1.5px solid #1e3a5f;
+  border-top-width: 2.5px;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.6);
+  box-sizing: border-box;
+}
+
+.theme-win7 .w7-btn-close {
+  width: 44px;
+  background: linear-gradient(
+    to bottom,
+    rgba(248, 160, 140, 0.8) 0%,
+    rgba(235, 95, 75, 0.75) 45%,
+    rgba(215, 50, 30, 0.8) 50%,
+    rgba(230, 80, 60, 0.85) 100%
+  );
+  border-color: rgba(140, 25, 15, 0.7);
+}
+
+.theme-win7 .w7-btn-close::before,
+.theme-win7 .w7-btn-close::after {
+  content: "";
+  position: absolute;
+  width: 9px;
+  height: 2px;
+  background: #ffffff;
+  box-shadow: 0 0 2px rgba(0, 0, 0, 0.5);
+  top: 8px;
+  left: 17px;
+}
+
+.theme-win7 .w7-btn-close::before {
+  transform: rotate(45deg);
+}
+
+.theme-win7 .w7-btn-close::after {
+  transform: rotate(-45deg);
+}
+
+/* Window Body Content — frosted glass with pre-blurred aurora bleed-through */
+.theme-win7 .w7-window-body {
+  background:
+    linear-gradient(115deg,
+      rgba(170, 245, 238, 0.55) 0%, rgba(170, 245, 238, 0.14) 28%,
+      rgba(45, 195, 255, 0.48) 42%, rgba(45, 195, 255, 0.12) 62%,
+      rgba(15, 100, 225, 0.52) 76%, rgba(15, 100, 225, 0.14) 100%),
+    var(--w7-surface);
+  border-top: 1px solid rgba(255, 255, 255, 0.75);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.08);
+  padding: 14px;
+  box-sizing: border-box;
+  position: relative;
+}
+
+/* Cards & Summary */
+.theme-win7 .card {
+  background-color: rgba(255, 255, 255, 0.48);
+  background-image:
+    linear-gradient(115deg,
+      rgba(170, 245, 238, 0.45) 0%, rgba(170, 245, 238, 0.12) 30%,
+      rgba(45, 195, 255, 0.40) 46%, rgba(45, 195, 255, 0.10) 66%,
+      rgba(15, 100, 225, 0.46) 80%, rgba(15, 100, 225, 0.12) 100%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.52) 0%, rgba(245, 250, 255, 0.42) 100%);
+  border: 1px solid var(--w7-card-border);
+  border-radius: 5px;
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.08),
+    0 0 0 1px rgba(255, 255, 255, 0.75) inset;
+  padding: 12px 14px;
+  color: var(--w7-text);
+  min-width: 0;
+  box-sizing: border-box;
+  position: relative;
+}
+
+.theme-win7 .summary-card {
+  background-color: rgba(235, 245, 255, 0.50);
+  background-image:
+    linear-gradient(115deg,
+      rgba(170, 245, 238, 0.50) 0%, rgba(170, 245, 238, 0.14) 30%,
+      rgba(45, 195, 255, 0.44) 46%, rgba(45, 195, 255, 0.11) 66%,
+      rgba(15, 100, 225, 0.50) 78%, rgba(15, 100, 225, 0.13) 100%),
+    linear-gradient(180deg, rgba(235, 245, 255, 0.52) 0%, rgba(220, 235, 250, 0.46) 100%);
+  border: 1px solid #8db3dc;
+  box-shadow:
+    0 2px 5px rgba(20, 60, 105, 0.12),
+    0 0 0 1px rgba(255, 255, 255, 0.8) inset;
+}
+
+.theme-win7 .card-title {
+  color: #10253d;
+  font-weight: 600;
+  font-size: 13px;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+
+.theme-win7 .summary-title {
+  color: #08213d;
+  font-size: 14.5px;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+.theme-win7 .group-title {
+  color: #2c4a68;
+  font-size: 11.5px;
+  border-bottom: 1px solid rgba(190, 215, 240, 0.7);
+  padding-bottom: 3px;
+  margin-bottom: 7px;
+  font-weight: 600;
+}
+
+.theme-win7 .bar-label {
+  color: #283e54;
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.theme-win7 .bar-val {
+  color: #0c1c2e;
+  font-weight: 600;
+  font-size: 11.5px;
+}
+
+.theme-win7 .badge {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 3px;
+  border: 1px solid transparent;
+}
+
+.theme-win7 .badge-plan {
+  background: linear-gradient(to bottom, rgba(240, 246, 253, 0.9), rgba(215, 230, 245, 0.85));
+  color: #163354;
+  border-color: #a5bdd8;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+.theme-win7 .badge-cooling {
+  background: linear-gradient(to bottom, rgba(255, 248, 230, 0.9), rgba(253, 230, 170, 0.85));
+  color: #7a4800;
+  border-color: #e0b040;
+}
+
+.theme-win7 .badge-expires {
+  background: linear-gradient(to bottom, rgba(245, 247, 250, 0.9), rgba(225, 230, 238, 0.85));
+  color: #283444;
+  border-color: #c2cbd6;
+}
+
+.theme-win7 .badge-credits {
+  background: linear-gradient(to bottom, rgba(235, 253, 245, 0.9), rgba(167, 243, 208, 0.85));
+  color: #064e3b;
+  border-color: #34d399;
+}
+
+.theme-win7 .summary-reset-row {
+  background: var(--w7-banner-bg);
+  color: #12385e;
+  border: 1px solid var(--w7-banner-border);
+  border-radius: 4px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.theme-win7 .summary-reset-kind {
+  color: #154575;
+  font-weight: 600;
+}
+
+.theme-win7 .summary-reset-time {
+  color: #08213d;
+}
+
+.theme-win7 .summary-reset-banner {
+  background: var(--w7-banner-bg);
+  color: #12385e;
+  border: 1px solid var(--w7-banner-border);
+  border-radius: 4px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+/* Authentic Windows 7 Sunken Glass & Emerald Specular Progress Bar */
+.theme-win7 .progress-track {
+  background: linear-gradient(to bottom, rgba(220, 230, 242, 0.85) 0%, rgba(245, 250, 255, 0.9) 100%);
+  border: 1px solid var(--w7-sunken-border);
+  border-radius: 3px;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.2);
+  height: 12px;
+  padding: 1px;
+}
+
+.theme-win7 .progress-fill {
+  border-radius: 2px;
+  background: linear-gradient(
+    to bottom,
+    #a8f0a0 0%,
+    #54d943 45%,
+    #1cb809 50%,
+    #2dd01a 80%,
+    #7ee872 100%
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.85),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.15),
+    0 0 3px rgba(45, 208, 26, 0.4);
+}
+
+.theme-win7 .bar-med .progress-fill {
+  background: linear-gradient(
+    to bottom,
+    #ffe885 0%,
+    #ffc726 45%,
+    #f29b05 50%,
+    #fca814 80%,
+    #ffdc69 100%
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.85),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.15),
+    0 0 3px rgba(242, 155, 5, 0.4);
+}
+
+.theme-win7 .bar-low .progress-fill {
+  background: linear-gradient(
+    to bottom,
+    #ffa6a6 0%,
+    #f54e4e 45%,
+    #dc1e1e 50%,
+    #ea3333 80%,
+    #ff8a8a 100%
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.85),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.15),
+    0 0 3px rgba(220, 30, 30, 0.4);
+}
+
+.theme-win7 .summary-stat-label {
+  color: #2b4966;
+}
+
+.theme-win7 .summary-stat-val .sum-pct {
+  color: #0f4682;
+  font-weight: 700;
+}
+
+.theme-win7 .page-note {
+  color: #3a536b;
+  font-size: 11px;
+}
+
+.theme-win7 .card-err-box {
+  background: rgba(254, 242, 242, 0.88);
+  border: 1px solid #fca5a5;
+  color: #991b1b;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+}

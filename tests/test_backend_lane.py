@@ -67,6 +67,8 @@ class RenderSettingsTests(unittest.TestCase):
         self.assertEqual(get_render_settings().theme, "md3")
         set_theme("winxp")
         self.assertEqual(get_render_settings().theme, "winxp")
+        set_theme("win7")
+        self.assertEqual(get_render_settings().theme, "win7")
         with self.assertRaises(ValueError):
             set_theme("invalid_theme_name")
 
@@ -110,11 +112,11 @@ class RenderSettingsTests(unittest.TestCase):
             self.assertEqual(settings.extra.get("version"), 2)
 
             # Modify theme via API
-            set_theme("winxp")
+            set_theme("win7")
 
             # Read back from disk directly
             saved_raw = json.loads(target_file.read_text(encoding="utf-8"))
-            self.assertEqual(saved_raw["theme"], "winxp")
+            self.assertEqual(saved_raw["theme"], "win7")
             self.assertEqual(saved_raw["cards_per_row"], 3)
             self.assertEqual(saved_raw["custom_theme_config"], {"accent": "blue"})
             self.assertEqual(saved_raw["version"], 2)

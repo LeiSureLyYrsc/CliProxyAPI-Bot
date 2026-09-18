@@ -122,6 +122,8 @@ def _normalize_settings(raw: dict[str, Any]) -> dict[str, Any]:
         theme = "md3"
     elif raw_theme == "winxp":
         theme = "winxp"
+    elif raw_theme == "win7":
+        theme = "win7"
     else:
         theme = "shadcn"
 
@@ -460,7 +462,7 @@ def build_platform_html(
 ) -> str:
     """
     构建平台配额 HTML。
-    - theme: 'shadcn' | 'mac' | 'md3' | 'winxp'
+    - theme: 'shadcn' | 'mac' | 'md3' | 'winxp' | 'win7'
     - cards_per_row: 1..6
     - page: 当前页码
     - pages: 总页码
@@ -468,7 +470,7 @@ def build_platform_html(
     """
     settings = get_render_settings_adapter()
     actual_theme = (theme or settings.get("theme") or "shadcn").lower()
-    if actual_theme not in {"shadcn", "mac", "md3", "winxp"}:
+    if actual_theme not in {"shadcn", "mac", "md3", "winxp", "win7"}:
         actual_theme = "shadcn"
 
     cols = cards_per_row or settings.get("cards_per_row", DEFAULT_CARDS_PER_ROW)
@@ -519,6 +521,24 @@ def build_platform_html(
             f'</div>'
             f'</div>'
             f'<div class="xp-window-body">'
+            f'<div class="grid">{grid_content}</div>'
+            f'{page_note}'
+            f'</div>'
+            f'</div>'
+        )
+    elif actual_theme == "win7":
+        sheet_inner = (
+            f'<div class="w7-window">'
+            f'<div class="w7-titlebar">'
+            f'<div class="w7-titlebar-icon"></div>'
+            f'<div class="w7-titlebar-text">{html.escape(section.title)} 配额监控</div>'
+            f'<div class="w7-titlebar-controls">'
+            f'<button class="w7-btn-ctrl w7-btn-min" aria-label="Minimize"></button>'
+            f'<button class="w7-btn-ctrl w7-btn-max" aria-label="Maximize"></button>'
+            f'<button class="w7-btn-ctrl w7-btn-close" aria-label="Close"></button>'
+            f'</div>'
+            f'</div>'
+            f'<div class="w7-window-body">'
             f'<div class="grid">{grid_content}</div>'
             f'{page_note}'
             f'</div>'

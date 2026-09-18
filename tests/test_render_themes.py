@@ -70,17 +70,25 @@ class RenderThemesAndFeaturesTests(unittest.TestCase):
         )
 
     def test_theme_markers_and_components(self) -> None:
-        for theme in ["shadcn", "mac", "md3", "winxp"]:
+        for theme in ["shadcn", "mac", "md3", "winxp", "win7"]:
             html_doc = build_platform_html(self.sample_section, theme=theme)
             self.assertIn(f"theme-{theme}", html_doc)
             if theme == "mac":
                 self.assertIn('<div class="sheet-window">', html_doc)
                 self.assertIn('<div class="mac-titlebar">', html_doc)
                 self.assertIn('<div class="mac-controls">', html_doc)
+                self.assertNotIn('<div class="xp-window">', html_doc)
+                self.assertNotIn('<div class="w7-window">', html_doc)
             elif theme == "md3":
                 self.assertIn("theme-md3", html_doc)
+                self.assertNotIn('<div class="sheet-window">', html_doc)
+                self.assertNotIn('<div class="xp-window">', html_doc)
+                self.assertNotIn('<div class="w7-window">', html_doc)
             elif theme == "shadcn":
                 self.assertIn("theme-shadcn", html_doc)
+                self.assertNotIn('<div class="sheet-window">', html_doc)
+                self.assertNotIn('<div class="xp-window">', html_doc)
+                self.assertNotIn('<div class="w7-window">', html_doc)
             elif theme == "winxp":
                 self.assertIn("theme-winxp", html_doc)
                 self.assertIn('<div class="xp-window">', html_doc)
@@ -90,6 +98,23 @@ class RenderThemesAndFeaturesTests(unittest.TestCase):
                 self.assertIn('<div class="xp-window-body">', html_doc)
                 self.assertNotIn('<div class="mac-titlebar">', html_doc)
                 self.assertNotIn('<div class="sheet-window">', html_doc)
+                self.assertNotIn('<div class="w7-window">', html_doc)
+            elif theme == "win7":
+                self.assertIn("theme-win7", html_doc)
+                self.assertIn('<div class="w7-window">', html_doc)
+                self.assertIn('<div class="w7-titlebar">', html_doc)
+                self.assertIn('<div class="w7-titlebar-icon"></div>', html_doc)
+                self.assertIn('<div class="w7-titlebar-text">', html_doc)
+                self.assertIn('<div class="w7-titlebar-controls">', html_doc)
+                self.assertIn("w7-btn-ctrl", html_doc)
+                self.assertIn("w7-btn-min", html_doc)
+                self.assertIn("w7-btn-max", html_doc)
+                self.assertIn("w7-btn-close", html_doc)
+                self.assertIn('<div class="w7-window-body">', html_doc)
+                self.assertNotIn('<div class="mac-titlebar">', html_doc)
+                self.assertNotIn('<div class="xp-titlebar">', html_doc)
+                self.assertNotIn('<div class="sheet-window">', html_doc)
+                self.assertNotIn('<div class="xp-window">', html_doc)
 
     def test_icon_data_uris_and_no_remote_urls(self) -> None:
         platforms = ["claude", "codex", "antigravity", "kimi", "xai", "gemini-cli"]
@@ -189,6 +214,18 @@ class RenderThemesAndFeaturesTests(unittest.TestCase):
         self.assertIn("Claude/GPT · 周额度：", html_doc)
         self.assertIn("最快于 2天 后刷新额度", html_doc)
 
+    def test_win7_css_aero_glass_properties(self) -> None:
+        html_doc = build_platform_html(self.sample_section, theme="win7")
+        # Ensure backdrop-filter and translucent alpha colors are applied across window, titlebar, body, cards
+        self.assertIn("backdrop-filter: blur(14px) saturate(175%)", html_doc)
+        self.assertIn(".theme-win7 .w7-titlebar", html_doc)
+        self.assertIn(".theme-win7 .w7-window-body", html_doc)
+        self.assertIn(".theme-win7 .card", html_doc)
+        self.assertIn("--w7-surface: rgba(230, 240, 252, 0.55)", html_doc)
+        self.assertIn("--w7-card-bg: rgba(255, 255, 255, 0.48)", html_doc)
+        self.assertIn("linear-gradient(115deg", html_doc)
+        self.assertIn("rgba(170, 245, 238, 0.55)", html_doc)
+
     def test_account_card_features(self) -> None:
         html_doc = build_platform_html(self.sample_section, self.sample_accounts[:7], page=1, pages=2)
         # Chinese 冷却中
@@ -260,7 +297,7 @@ class ChromiumScreenshotIntegrationTests(unittest.IsolatedAsyncioTestCase):
             window_labels={"code-5h": "5h", "code-7d": "7d"},
         )
 
-        for theme in ["shadcn", "mac", "md3", "winxp"]:
+        for theme in ["shadcn", "mac", "md3", "winxp", "win7"]:
             html_doc = build_platform_html(section, theme=theme, cards_per_row=4)
             self.assertTrue(len(html_doc) > 500)
             from cpaplugin.render import _screenshot
@@ -335,7 +372,7 @@ class ChromiumScreenshotIntegrationTests(unittest.IsolatedAsyncioTestCase):
         page = await context.new_page()
 
         try:
-            for theme in ["shadcn", "mac", "md3", "winxp"]:
+            for theme in ["shadcn", "mac", "md3", "winxp", "win7"]:
                 for cols in range(1, 7):
                     paginated = paginate_accounts(stress_accounts, cards_per_row=cols, rows_per_page=2)
                     for page_idx, page_accs in enumerate(paginated, start=1):
@@ -379,7 +416,7 @@ class ChromiumScreenshotIntegrationTests(unittest.IsolatedAsyncioTestCase):
                         sheet_metrics = await page.evaluate(
                             """() => {
                             const sheet = document.querySelector('.sheet');
-                            const sheetWin = document.querySelector('.sheet-window') || document.querySelector('.xp-window');
+                            const sheetWin = document.querySelector('.sheet-window') || document.querySelector('.xp-window') || document.querySelector('.w7-window');
                             const target = sheetWin || sheet;
                             return {
                                 clientWidth: target.clientWidth,
@@ -430,3 +467,152 @@ class ChromiumScreenshotIntegrationTests(unittest.IsolatedAsyncioTestCase):
                         )
         finally:
             await context.close()
+
+    async def test_win7_computed_backdrop_filter_in_chromium(self) -> None:
+        from cpaplugin.render import _ensure_browser
+
+        try:
+            browser = await _ensure_browser()
+        except Exception as e:
+            self.skipTest(f"Playwright/Chromium not available: {e}")
+
+        sample_accounts = [
+            AccountQuota(
+                platform="claude",
+                name="claude-user-1",
+                auth_index="1",
+                plan="Pro",
+                windows=[
+                    QuotaWindow(id="five_hour", label="5h", remaining_percent=75.0, reset_label="1h45m"),
+                ],
+            )
+        ]
+        section = PlatformQuota(
+            platform="claude",
+            title="Claude",
+            accounts=sample_accounts,
+            window_remain_sum={"five_hour": 75.0},
+            window_remain_count={"five_hour": 1},
+            window_labels={"five_hour": "5h"},
+        )
+
+        context = await browser.new_context(viewport={"width": 1280, "height": 800})
+        page = await context.new_page()
+        try:
+            html_doc = build_platform_html(section, sample_accounts, theme="win7", cards_per_row=4)
+            await page.set_content(html_doc, wait_until="load")
+
+            # Evaluate computed styles on win7 elements
+            styles = await page.evaluate(
+                """() => {
+                const win = document.querySelector('.w7-window');
+                const titlebar = document.querySelector('.w7-titlebar');
+                const body = document.querySelector('.w7-window-body');
+                const card = document.querySelector('.card');
+                return {
+                    winBdf: window.getComputedStyle(win).backdropFilter || window.getComputedStyle(win).webkitBackdropFilter,
+                    titleBdf: window.getComputedStyle(titlebar).backdropFilter || window.getComputedStyle(titlebar).webkitBackdropFilter,
+                    bodyBdf: window.getComputedStyle(body).backdropFilter || window.getComputedStyle(body).webkitBackdropFilter,
+                    cardBdf: window.getComputedStyle(card).backdropFilter || window.getComputedStyle(card).webkitBackdropFilter,
+                };
+            }"""
+            )
+            # In Chromium supporting backdrop-filter, these should contain blur
+            self.assertTrue("blur" in str(styles["winBdf"]).lower())
+            self.assertTrue("blur" in str(styles["bodyBdf"]).lower())
+            self.assertTrue("blur" in str(styles["cardBdf"]).lower())
+        finally:
+            await context.close()
+
+    async def test_win7_pixel_level_glass_bleedthrough_probe(self) -> None:
+        """
+        Pixel probe: Compare pixel values inside win7 cards with aurora backdrop
+        via in-browser canvas context, verifying the underlying aurora colors bleed into the card.
+        """
+        from cpaplugin.render import _ensure_browser
+
+        try:
+            browser = await _ensure_browser()
+        except Exception as e:
+            self.skipTest(f"Playwright/Chromium not available: {e}")
+
+        sample_accounts = [
+            AccountQuota(
+                platform="claude",
+                name="claude-user-1",
+                auth_index="1",
+                plan="Pro",
+                windows=[
+                    QuotaWindow(id="five_hour", label="5h", remaining_percent=75.0, reset_label="1h45m"),
+                ],
+            )
+        ]
+        section = PlatformQuota(
+            platform="claude",
+            title="Claude",
+            accounts=sample_accounts,
+            window_remain_sum={"five_hour": 75.0},
+            window_remain_count={"five_hour": 1},
+            window_labels={"five_hour": "5h"},
+        )
+
+        html_win7 = build_platform_html(section, sample_accounts, theme="win7", cards_per_row=4)
+        context = await browser.new_context(viewport={"width": 1280, "height": 800})
+        page = await context.new_page()
+        try:
+            await page.set_content(html_win7, wait_until="load")
+
+            # Extract pixel data across horizontal and vertical positions inside .w7-window-body
+            probe_result = await page.evaluate(
+                """async () => {
+                const body = document.querySelector('.w7-window-body');
+                const rect = body.getBoundingClientRect();
+                const card = document.querySelector('.card');
+                const cardRect = card.getBoundingClientRect();
+
+                // Create a canvas to sample rendered element background colors
+                const canvas = document.createElement('canvas');
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+                const ctx = canvas.getContext('2d');
+
+                // Read computed card background and window body background
+                const bodyStyle = window.getComputedStyle(body);
+                const cardStyle = window.getComputedStyle(card);
+                const winStyle = window.getComputedStyle(document.querySelector('.w7-window'));
+
+                return {
+                    bodyBg: bodyStyle.backgroundColor,
+                    cardBg: cardStyle.backgroundColor,
+                    winBg: winStyle.backgroundColor,
+                    winBdf: winStyle.backdropFilter || winStyle.webkitBackdropFilter,
+                    bodyBdf: bodyStyle.backdropFilter || bodyStyle.webkitBackdropFilter,
+                };
+            }"""
+            )
+
+            # Extract alpha values from backgroundColor (rgba(r, g, b, a))
+            import re
+            body_alpha_match = re.search(r"rgba\([^)]+,\s*([\d.]+)\)", probe_result["bodyBg"])
+            card_alpha_match = re.search(r"rgba\([^)]+,\s*([\d.]+)\)", probe_result["cardBg"])
+
+            body_alpha = float(body_alpha_match.group(1)) if body_alpha_match else 1.0
+            card_alpha = float(card_alpha_match.group(1)) if card_alpha_match else 1.0
+
+            print(f"\n[Win7 Glass Probe] Body Alpha: {body_alpha}, Card Alpha: {card_alpha}, Win BDF: {probe_result['winBdf']}")
+
+            # Assert transparency is clearly see-through while remaining readable
+            self.assertLessEqual(body_alpha, 0.72, f"Body alpha {body_alpha} should be <= 0.72 for see-through glass")
+            self.assertGreaterEqual(body_alpha, 0.50, f"Body alpha {body_alpha} should be >= 0.50 for contrast")
+            self.assertLessEqual(card_alpha, 0.75, f"Card alpha {card_alpha} should be <= 0.75 for see-through glass")
+            self.assertGreaterEqual(card_alpha, 0.45, f"Card alpha {card_alpha} should be >= 0.45 for readable text")
+            self.assertTrue("blur" in str(probe_result["winBdf"]).lower())
+            self.assertTrue("blur" in str(probe_result["bodyBdf"]).lower())
+        finally:
+            await context.close()
+
+
+
+
+if __name__ == "__main__":
+    unittest.main()
