@@ -178,6 +178,34 @@ class SubscriptionExpiryTests(unittest.TestCase):
         self.assertIn("2026-11-15", label_top_explicit)
         self.assertIn("剩", label_top_explicit)
 
+        # 2b. Top-level and id_token explicit chatgpt_subscription_active_until / subscription_active_until
+        ts_idtoken, label_idtoken = extract_subscription_expiry({
+            "id_token": {
+                "chatgpt_subscription_active_until": 1790000000,
+            }
+        })
+        self.assertIsNotNone(ts_idtoken)
+        self.assertEqual(ts_idtoken, 1790000000.0)
+        self.assertTrue(len(label_idtoken) > 0)
+
+        ts_idtoken_camel, label_idtoken_camel = extract_subscription_expiry({
+            "id_token": {
+                "chatgptSubscriptionActiveUntil": "2026-11-15T00:00:00Z",
+            }
+        })
+        self.assertIsNotNone(ts_idtoken_camel)
+        self.assertIn("2026-11-15", label_idtoken_camel)
+
+        ts_top_sub_until, _ = extract_subscription_expiry({
+            "chatgpt_subscription_active_until": 1790000000
+        })
+        self.assertEqual(ts_top_sub_until, 1790000000.0)
+
+        ts_top_sub_camel, _ = extract_subscription_expiry({
+            "subscriptionActiveUntil": 1790000000
+        })
+        self.assertEqual(ts_top_sub_camel, 1790000000.0)
+
         # 3. Nested subscription dict allows generic expires_at/valid_until
         ts2, label2 = extract_subscription_expiry({
             "subscription": {
@@ -207,6 +235,16 @@ class SubscriptionExpiryTests(unittest.TestCase):
         ts, label = extract_subscription_expiry(data)
         self.assertIsNone(ts)
         self.assertEqual(label, "")
+
+        # Codex rate_limit reset_at is not treated as subscription expiry
+        codex_data = {
+            "rate_limit": {
+                "reset_at": 1790000000,
+            }
+        }
+        ts_cx, label_cx = extract_subscription_expiry(codex_data)
+        self.assertIsNone(ts_cx)
+        self.assertEqual(label_cx, "")
 
     def test_expiry_label_countdown_format(self) -> None:
         future_ts = time.time() + 86400 * 5 + 3600 * 3 + 100

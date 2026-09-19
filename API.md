@@ -263,7 +263,7 @@ curl -X PATCH -H 'Authorization: Bearer <MANAGEMENT_KEY>' \
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
-| GET | `/auth-files` | 列表（含 `auth_index`、status、用量桶） |
+| GET | `/auth-files?name=&auth_index=` | 列表（支持 `name` 或 `auth_index` 过滤；含 `auth_index`、status、用量桶及安全 claims） |
 | GET | `/auth-files/models?name=` | 某凭证支持的模型 |
 | GET | `/model-definitions/:channel` | 静态模型目录。未知 channel 返回 400 |
 | GET | `/auth-files/download?name=` | 下载单个 JSON |
@@ -274,7 +274,7 @@ curl -X PATCH -H 'Authorization: Bearer <MANAGEMENT_KEY>' \
 | PATCH | `/auth-files/fields` | 改元数据。支持点路径，例如 `headers.X-Team` |
 | POST | `/vertex/import` | 导入 Vertex service account |
 
-列表响应示例：
+列表响应示例（Claude / Codex）：
 
 ```json
 {
@@ -297,10 +297,25 @@ curl -X PATCH -H 'Authorization: Bearer <MANAGEMENT_KEY>' \
       "success": 12,
       "failed": 1,
       "email": "user@example.com"
+    },
+    {
+      "id": "codex-user@example.com",
+      "auth_index": "b2c3d4e5f6a17890",
+      "name": "codex-user@example.com.json",
+      "provider": "codex",
+      "status": "ready",
+      "id_token": {
+        "chatgpt_subscription_active_until": 1788800000,
+        "plan_type": "pro"
+      }
     }
   ]
 }
 ```
+
+> **额度与订阅到期字段说明**：
+> - **Codex 套餐到期**：`chatgpt_subscription_active_until`（或 `subscription_active_until`）表示 ChatGPT 订阅的当前有效截止/续期节点；它不同于 OAuth Access Token 的过期时间 `expires_at`，也不同于 WHAM 5h/周额度刷新时间 `reset_at`。CPA 在 `/auth-files` 列表的条目中可能直接暴露 `id_token` 安全 claims，Bot 直接读取此类字段即可提取套餐到期和静态计划，无需下载原始凭证或自行解析原始 JWT。
+> - **xAI / Grok 配额**：周总额度来自 `creditUsagePercent`（对应 ID `billing`），刷新倒计时由 `billingPeriodEnd` 提供并仅属于周总额度；`products`/`usages` 中的子项（如 `GrokBuild`、`GrokChat`、`GrokImagine` 以及未来动态项）为细分产品用量明细，属于其他额度且无独立 reset 刷新节点。
 
 配置型 API-key 记录通过各自的 `excluded-models` 禁用；插件虚拟子项不能独立改状态。
 

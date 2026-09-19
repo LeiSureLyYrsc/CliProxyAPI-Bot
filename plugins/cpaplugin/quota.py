@@ -101,6 +101,7 @@ WINDOW_ORDER = (
     "billing",
     "grok-build",
     "grok-chat",
+    "grok-imagine",
     "usage",
 )
 
@@ -449,11 +450,13 @@ def extract_subscription_expiry(data: dict[str, Any]) -> tuple[float | None, str
     从凭证文件或响应字典中通用提取订阅到期时间。
     可靠规则：
     1. 顶级字段仅允许显式的 subscription_expires_at, subscriptionExpiresAt,
-       subscription_expiration, subscriptionExpiration。
+       subscription_expiration, subscriptionExpiration,
+       chatgpt_subscription_active_until, chatgptSubscriptionActiveUntil,
+       subscription_active_until, subscriptionActiveUntil。
        避免误判 auth token 过期字段 (expires_at, valid_until 等)。
-    2. 在明确的 subscription/plan/tier/paidTier/currentTier 嵌套对象内，
-       才允许泛化的 expires/end/valid 字段。
-    3. 严禁将 xAI 的 billingPeriodEnd / billing_period_end 视为订阅到期。
+    2. 在明确的 subscription/plan/tier/paidTier/currentTier 以及 id_token/idToken 嵌套对象内，
+       提取订阅到期字段（包含 chatgpt_subscription_active_until / subscription_active_until / expires_at 等）。
+    3. 严禁将 xAI 的 billingPeriodEnd / billing_period_end 或 Codex rate_limit reset_at 视为订阅到期。
     """
     if not isinstance(data, dict):
         return None, ""
@@ -463,12 +466,35 @@ def extract_subscription_expiry(data: dict[str, Any]) -> tuple[float | None, str
         "subscriptionExpiresAt",
         "subscription_expiration",
         "subscriptionExpiration",
+        "chatgpt_subscription_active_until",
+        "chatgptSubscriptionActiveUntil",
+        "subscription_active_until",
+        "subscriptionActiveUntil",
     )
     for key in explicit_top_keys:
         if key in data and data[key] is not None and data[key] != "":
             parsed_ts = _parse_any_ts(data[key])
             if parsed_ts is not None and parsed_ts > 0:
                 return parsed_ts, format_subscription_expiry_label(parsed_ts)
+
+    # 优先检查 id_token / idToken 嵌套中的显式 subscription_active_until / chatgpt_subscription_active_until
+    id_token = data.get("id_token") or data.get("idToken")
+    if isinstance(id_token, dict):
+        id_token_keys = (
+            "chatgpt_subscription_active_until",
+            "chatgptSubscriptionActiveUntil",
+            "subscription_active_until",
+            "subscriptionActiveUntil",
+            "subscription_expires_at",
+            "subscriptionExpiresAt",
+            "subscription_expiration",
+            "subscriptionExpiration",
+        )
+        for key in id_token_keys:
+            if key in id_token and id_token[key] is not None and id_token[key] != "":
+                parsed_ts = _parse_any_ts(id_token[key])
+                if parsed_ts is not None and parsed_ts > 0:
+                    return parsed_ts, format_subscription_expiry_label(parsed_ts)
 
     nested_sub_keys = (
         "subscription",
@@ -480,6 +506,8 @@ def extract_subscription_expiry(data: dict[str, Any]) -> tuple[float | None, str
         "current_tier",
     )
     candidate_nested_keys = (
+        "chatgpt_subscription_active_until", "chatgptSubscriptionActiveUntil",
+        "subscription_active_until", "subscriptionActiveUntil",
         "expires_at", "expiresAt", "expire_at", "expireAt",
         "subscription_expires_at", "subscriptionExpiresAt",
         "subscription_expiration", "subscriptionExpiration",
@@ -1170,6 +1198,23 @@ def parse_kimi_usage(payload: dict[str, Any]) -> list[QuotaWindow]:
     )
 
 
+def _slugify_grok_product(name: str) -> str:
+    """
+    将产品名规范化为 ID，例如 GrokImagine -> grok-imagine, GrokChat -> grok-chat, GrokBuild -> grok-build。
+    处理 CamelCase、空格、下划线、连字符。
+    """
+    cleaned = re.sub(r"[_\s]+", "-", name.strip())
+    # CamelCase 转 kebab-case: 例如 GrokImagine -> Grok-Imagine
+    s1 = re.sub(r"([a-z0-9])([A-Z])", r"\1-\2", cleaned)
+    s2 = re.sub(r"([A-Z]+)([A-Z][a-z0-9])", r"\1-\2", s1)
+    slug = re.sub(r"[^a-zA-Z0-9\-]+", "", s2).strip("-").lower()
+    if not slug:
+        return ""
+    if not slug.startswith("grok-") and slug != "grok":
+        slug = f"grok-{slug}"
+    return slug
+
+
 def parse_xai_billing(payload: dict[str, Any]) -> list[QuotaWindow]:
     config = _as_dict(payload.get("config")) or payload
     windows: list[QuotaWindow] = []
@@ -1182,7 +1227,7 @@ def parse_xai_billing(payload: dict[str, Any]) -> list[QuotaWindow]:
     period_end = config.get("billingPeriodEnd") or config.get("billing_period_end") or payload.get("billingPeriodEnd")
     weekly = QuotaWindow(
         id="billing",
-        label="周",
+        label="周总额度",
         reset_label=_human_reset(period_end),
         reset_at=_parse_ts(str(period_end)) if period_end else None,
     )
@@ -1190,10 +1235,49 @@ def parse_xai_billing(payload: dict[str, Any]) -> list[QuotaWindow]:
         weekly.used_percent = _clamp(weekly_used)
         weekly.remaining_percent = _clamp(100.0 - weekly.used_percent)
         windows.append(weekly)
+
+    seen_ids: set[str] = set()
+    dynamic_windows: list[QuotaWindow] = []
+
+    lists_to_check: list[list[Any]] = []
+    for container in (payload, config if config is not payload else None):
+        if not isinstance(container, dict):
+            continue
+        for lk in ("products", "usages"):
+            val = container.get(lk)
+            if isinstance(val, list) and val not in lists_to_check:
+                lists_to_check.append(val)
+
+    for prod_list in lists_to_check:
+        for item in prod_list:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or item.get("product") or item.get("title") or "").strip()
+            used = _first_number(
+                item.get("usagePercent"),
+                item.get("usedPercent"),
+                item.get("creditUsagePercent"),
+                item.get("usage_percent"),
+                item.get("used_percent"),
+                item.get("credit_usage_percent"),
+            )
+            if not name or used is None:
+                continue
+            window_id = _slugify_grok_product(name)
+            if not window_id or window_id in seen_ids or window_id == "billing":
+                continue
+            seen_ids.add(window_id)
+            w = QuotaWindow(id=window_id, label=name)
+            w.used_percent = _clamp(used)
+            w.remaining_percent = _clamp(100.0 - w.used_percent)
+            dynamic_windows.append(w)
+
     for window_id, label, keys in (
         ("grok-build", "GrokBuild", ("grokBuildUsagePercent", "grok_build_usage_percent", "grokBuildUsage")),
         ("grok-chat", "GrokChat", ("grokChatUsagePercent", "grok_chat_usage_percent", "grokChatUsage")),
     ):
+        if window_id in seen_ids:
+            continue
         used = None
         for key in keys:
             used = _number(config.get(key))
@@ -1203,28 +1287,17 @@ def parse_xai_billing(payload: dict[str, Any]) -> list[QuotaWindow]:
                 break
         if used is None:
             continue
+        seen_ids.add(window_id)
         window = QuotaWindow(id=window_id, label=label)
         window.used_percent = _clamp(used)
         window.remaining_percent = _clamp(100.0 - window.used_percent)
-        windows.append(window)
-    products = payload.get("products") or config.get("products") or payload.get("usages")
-    if isinstance(products, list):
-        for item in products:
-            if not isinstance(item, dict):
-                continue
-            name = str(item.get("name") or item.get("product") or item.get("title") or "").strip()
-            used = _first_number(item.get("usagePercent"), item.get("usedPercent"), item.get("creditUsagePercent"))
-            if not name or used is None:
-                continue
-            key = name.lower().replace(" ", "")
-            window_id = "grok-build" if "build" in key else "grok-chat" if "chat" in key else key
-            if any(existing.id == window_id for existing in windows):
-                continue
-            window = QuotaWindow(id=window_id, label=name)
-            window.used_percent = _clamp(used)
-            window.remaining_percent = _clamp(100.0 - window.used_percent)
-            windows.append(window)
-    return sort_windows(windows)
+        dynamic_windows.append(window)
+
+    indexed = {wid: index for index, wid in enumerate(WINDOW_ORDER)}
+    dynamic_windows.sort(key=lambda w: (indexed.get(w.id, len(WINDOW_ORDER)), w.id, w.label))
+
+    windows.extend(dynamic_windows)
+    return windows
 
 
 def parse_antigravity_summary(payload: dict[str, Any]) -> list[QuotaWindow]:
@@ -1321,6 +1394,14 @@ def _plan_from_auth_file(file: dict[str, Any]) -> str:
         plan = _sanitize_plan(subscription.get("plan") or subscription.get("tierName") or subscription.get("name"))
         if plan:
             return plan
+
+    id_token = file.get("id_token") or file.get("idToken")
+    if isinstance(id_token, dict):
+        for key in ("plan_type", "planType", "plan", "tier", "tier_name", "tierName"):
+            plan = _sanitize_plan(id_token.get(key))
+            if plan:
+                return plan
+
     for key in ("plan", "plan_type", "planType", "tier", "tier_name", "tierName"):
         plan = _sanitize_plan(file.get(key))
         if plan:
@@ -1334,6 +1415,10 @@ def _plan_from_name(name: str) -> str:
         return "Ultra Lite"
     if "ultra" in blob:
         return "Ultra"
+    if "team" in blob:
+        return "Team"
+    if "enterprise" in blob:
+        return "Enterprise"
     if "plus" in blob:
         return "Plus"
     if "pro" in blob:

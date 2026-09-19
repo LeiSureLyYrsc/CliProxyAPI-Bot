@@ -121,6 +121,8 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(parse_antigravity_plan({"paidTier": {"name": "Google AI Ultra"}}), "Ultra")
         self.assertEqual(_plan_from_auth_file({"account_type": "oauth", "account": "a@b.com"}), "")
         self.assertEqual(_plan_from_auth_file({"plan_type": "plus"}), "Plus")
+        self.assertEqual(_plan_from_auth_file({"id_token": {"plan_type": "pro"}}), "Pro")
+        self.assertEqual(_plan_from_auth_file({"id_token": {"planType": "team"}}), "Team")
 
     def test_windows_sort_rolling_week_month(self) -> None:
         windows = sort_windows(
@@ -150,9 +152,56 @@ class ParserTests(unittest.TestCase):
             }
         )
         by_id = {item.id: item for item in windows}
+        self.assertEqual(by_id["billing"].label, "周总额度")
         self.assertEqual(by_id["billing"].remaining_percent, 87.0)
+        self.assertIsNotNone(by_id["billing"].reset_at)
         self.assertEqual(by_id["grok-build"].used_percent, 8.0)
+        self.assertIsNone(by_id["grok-build"].reset_at)
         self.assertEqual(by_id["grok-chat"].used_percent, 5.0)
+        self.assertIsNone(by_id["grok-chat"].reset_at)
+
+    def test_xai_dynamic_products_grok_imagine_and_voice(self) -> None:
+        # 覆盖 GrokImagine, 未知 GrokVoice, config 嵌套, 重复列表去重, 列表优先于顶层固定字段
+        windows = parse_xai_billing(
+            {
+                "config": {
+                    "creditUsagePercent": 25,
+                    "billingPeriodEnd": "2026-08-24T05:33:00Z",
+                    "grokBuildUsagePercent": 99,  # 顶层固定字段应被列表中的覆盖
+                    "products": [
+                        {"name": "GrokBuild", "usagePercent": 10},
+                        {"name": "GrokChat", "usagePercent": 12},
+                        {"name": "GrokImagine", "usagePercent": 30},
+                        {"name": "GrokVoice", "usedPercent": 5},
+                    ],
+                }
+            }
+        )
+        ids = [w.id for w in windows]
+        self.assertEqual(ids, ["billing", "grok-build", "grok-chat", "grok-imagine", "grok-voice"])
+        by_id = {w.id: w for w in windows}
+        self.assertEqual(by_id["billing"].label, "周总额度")
+        self.assertIsNotNone(by_id["billing"].reset_at)
+        self.assertEqual(by_id["grok-build"].used_percent, 10.0)  # 列表优先，不是 99.0
+        self.assertIsNone(by_id["grok-build"].reset_at)
+        self.assertEqual(by_id["grok-imagine"].used_percent, 30.0)
+        self.assertIsNone(by_id["grok-imagine"].reset_at)
+        self.assertEqual(by_id["grok-voice"].used_percent, 5.0)
+        self.assertIsNone(by_id["grok-voice"].reset_at)
+
+    def test_xai_fallback_top_level_fields_when_no_list(self) -> None:
+        windows = parse_xai_billing(
+            {
+                "creditUsagePercent": 40,
+                "grokBuildUsagePercent": 15,
+                "grokChatUsagePercent": 20,
+            }
+        )
+        ids = [w.id for w in windows]
+        self.assertEqual(ids, ["billing", "grok-build", "grok-chat"])
+        by_id = {w.id: w for w in windows}
+        self.assertEqual(by_id["grok-build"].used_percent, 15.0)
+        self.assertEqual(by_id["grok-chat"].used_percent, 20.0)
 
 
 class BoardFormatTests(unittest.TestCase):

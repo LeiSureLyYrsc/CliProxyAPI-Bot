@@ -5,6 +5,7 @@ import re
 import sys
 import types
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 _plugin_dir = Path(__file__).resolve().parents[1] / "plugins" / "cpaplugin"
@@ -155,6 +156,51 @@ class RenderThemesAndFeaturesTests(unittest.TestCase):
             self.sample_section, pages[1], page=2, pages=2, cards_per_row=4
         )
         self.assertNotIn('<article class="card summary-card">', html_p2)
+
+    def test_xai_render_contains_total_and_details_without_duplicate_reset(self) -> None:
+        from cpaplugin.quota import parse_xai_billing
+        windows = parse_xai_billing(
+            {
+                "creditUsagePercent": 20,
+                "billingPeriodEnd": (datetime.now(timezone.utc).timestamp() + 86400 * 2),
+                "products": [
+                    {"name": "GrokBuild", "usagePercent": 10},
+                    {"name": "GrokChat", "usagePercent": 5},
+                    {"name": "GrokImagine", "usagePercent": 15},
+                ],
+            }
+        )
+        xai_account = AccountQuota(
+            platform="xai",
+            name="grok-user-1",
+            auth_index="xai-1",
+            plan="Premium",
+            windows=windows,
+        )
+        section = PlatformQuota(
+            platform="xai",
+            title="xAI / Grok",
+            accounts=[xai_account],
+            window_remain_sum={"billing": 80.0},
+            window_remain_count={"billing": 1},
+            window_labels={"billing": "周总额度"},
+        )
+        html_doc = build_platform_html(section, [xai_account])
+        # 验证包含周总额度与子项
+        self.assertIn("周总额度", html_doc)
+        self.assertIn("GrokBuild", html_doc)
+        self.assertIn("GrokChat", html_doc)
+        self.assertIn("GrokImagine", html_doc)
+
+        # 验证分组标题
+        self.assertIn("xAI", html_doc)
+
+        # 验证刷新提示只属于周总额度，子项没有刷新提示
+        # 统计 bar-reset-hint 在账号卡片中的数量，仅有 1 个（周总额度的刷新）
+        card_start = html_doc.find('title="grok-user-1"')
+        card_slice = html_doc[card_start:]
+        self.assertEqual(card_slice.count("bar-reset-hint"), 1)
+        self.assertEqual(card_slice.count("后刷新额度"), 1)
 
     def test_summary_card_content_requirements(self) -> None:
         html_doc = build_platform_html(self.sample_section, self.sample_accounts[:7], page=1, pages=2)

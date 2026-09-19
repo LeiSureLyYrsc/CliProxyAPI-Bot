@@ -52,7 +52,7 @@ _GROUP_TITLES = {
     "claude-gpt": "Claude and GPT Models",
     "code": "Codex",
     "claude": "Claude",
-    "xai": "Billing",
+    "xai": "xAI",
     "kimi": "Usage",
     "other": "Quota",
 }
