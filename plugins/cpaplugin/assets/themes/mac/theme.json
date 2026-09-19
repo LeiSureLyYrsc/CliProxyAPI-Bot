@@ -1,0 +1,7 @@
+{
+  "name": "mac",
+  "display_name": "macOS Terminal",
+  "css_class": "theme-mac",
+  "aliases": [],
+  "description": "Apple macOS terminal dark glass aesthetics with window chrome"
+}

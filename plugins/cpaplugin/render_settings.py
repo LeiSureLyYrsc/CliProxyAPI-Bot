@@ -9,20 +9,63 @@ from typing import Any
 from nonebot import get_plugin_config
 
 from .config import Config
+from .theme_loader import get_theme_registry
 
-DEFAULT_THEME = "shadcn"
+DEFAULT_THEME = "default"
 DEFAULT_CARDS_PER_ROW = 4
-THEME_ALIASES: dict[str, str] = {
-    "default": "shadcn",
-    "shadcn": "shadcn",
-    "mac": "mac",
-    "md3": "md3",
-    "winxp": "winxp",
-    "win7": "win7",
-}
-ALLOWED_THEMES: tuple[str, ...] = ("shadcn", "mac", "md3", "winxp", "win7")
 MIN_CARDS_PER_ROW = 1
 MAX_CARDS_PER_ROW = 6
+
+
+class _DynamicThemeAliases(dict):
+    """动态获取主题别名映射以兼容旧代码并反映动态主题。"""
+
+    def __getitem__(self, key: Any) -> Any:
+        return get_theme_registry().get_alias_map()[key]
+
+    def __contains__(self, key: Any) -> bool:
+        return key in get_theme_registry().get_alias_map()
+
+    def __iter__(self):
+        return iter(get_theme_registry().get_alias_map())
+
+    def __len__(self) -> int:
+        return len(get_theme_registry().get_alias_map())
+
+    def get(self, key: Any, default: Any = None) -> Any:
+        return get_theme_registry().get_alias_map().get(key, default)
+
+    def keys(self):
+        return get_theme_registry().get_alias_map().keys()
+
+    def values(self):
+        return get_theme_registry().get_alias_map().values()
+
+    def items(self):
+        return get_theme_registry().get_alias_map().items()
+
+
+class _DynamicAllowedThemes(tuple):
+    """动态获取允许的主题列表以兼容旧代码。"""
+
+    def __new__(cls):
+        return super().__new__(cls, tuple(get_theme_registry().list_canonical_names()))
+
+    def __iter__(self):
+        return iter(get_theme_registry().list_canonical_names())
+
+    def __contains__(self, item: Any) -> bool:
+        return item in get_theme_registry().list_canonical_names()
+
+    def __len__(self) -> int:
+        return len(get_theme_registry().list_canonical_names())
+
+    def __getitem__(self, index: Any) -> Any:
+        return get_theme_registry().list_canonical_names()[index]
+
+
+THEME_ALIASES = _DynamicThemeAliases()
+ALLOWED_THEMES = _DynamicAllowedThemes()
 
 _store: RenderSettings | None = None
 _memory_only = False
@@ -52,9 +95,10 @@ def get_render_settings_path(cfg: Config | None = None) -> Path:
 
 def normalize_theme(value: str) -> str:
     text = (value or "").strip().lower()
-    if text in THEME_ALIASES:
-        return THEME_ALIASES[text]
-    allowed = ", ".join(f"{k}" for k in THEME_ALIASES)
+    registry = get_theme_registry()
+    if registry.is_valid_theme(text):
+        return registry.resolve_theme_name(text)
+    allowed = ", ".join(registry.list_canonical_names())
     raise ValueError(f"未知主题「{value}」。可选主题：{allowed}")
 
 
@@ -62,7 +106,8 @@ def normalize_theme_or_default(value: Any) -> str:
     if not isinstance(value, str):
         return DEFAULT_THEME
     text = value.strip().lower()
-    return THEME_ALIASES.get(text, DEFAULT_THEME)
+    registry = get_theme_registry()
+    return registry.resolve_theme_name(text)
 
 
 def normalize_cards_per_row(value: Any) -> int:

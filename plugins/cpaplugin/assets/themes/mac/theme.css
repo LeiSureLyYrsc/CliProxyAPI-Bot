@@ -1,0 +1,208 @@
+.theme-mac {
+  --mac-bg: #1e1e24;
+  --mac-card-bg: rgba(38, 38, 48, 0.95);
+  --mac-border: rgba(255, 255, 255, 0.12);
+  --mac-text: #eceff4;
+  --mac-dim: #9aa2b2;
+  --mac-green: #50fa7b;
+  --mac-cyan: #8be9fd;
+  --mac-yellow: #f1fa8c;
+  --mac-orange: #ffb86c;
+  --mac-red: #ff5555;
+  --mac-magenta: #ff79c6;
+
+  background: #18181f;
+  color: var(--mac-text);
+  font-family: var(--font-mono);
+  padding: 18px;
+}
+
+.theme-mac .sheet-window {
+  background: var(--mac-bg);
+  border-radius: 12px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+  padding: 0 14px 14px 14px;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.theme-mac .mac-titlebar {
+  display: flex;
+  align-items: center;
+  height: 36px;
+  position: relative;
+  margin-bottom: 4px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.theme-mac .mac-controls {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  flex-shrink: 0;
+  z-index: 2;
+}
+
+.theme-mac .mac-btn {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.2);
+}
+
+.theme-mac .mac-btn-close { background: #ff5f56; }
+.theme-mac .mac-btn-min { background: #ffbd2e; }
+.theme-mac .mac-btn-max { background: #27c93f; }
+
+.theme-mac .mac-window-title {
+  position: absolute;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--mac-dim);
+  pointer-events: none;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 60px;
+}
+
+.theme-mac .card {
+  background: var(--mac-card-bg);
+  border: 1px solid var(--mac-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+
+.theme-mac .summary-card {
+  border-color: rgba(139, 233, 253, 0.35);
+  background: linear-gradient(145deg, rgba(45, 48, 65, 0.95), rgba(30, 32, 45, 0.95));
+}
+
+.theme-mac .card-title {
+  font-size: 12px;
+  color: var(--mac-green);
+}
+
+.theme-mac .summary-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--mac-cyan);
+}
+
+.theme-mac .summary-account-count {
+  font-size: 11px;
+  color: var(--mac-dim);
+  margin-left: auto;
+}
+
+.theme-mac .brand-badge-fallback {
+  background: rgba(255,255,255,0.08);
+  color: var(--mac-cyan);
+  border: 1px solid var(--mac-border);
+}
+
+.theme-mac .badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--mac-text);
+  border: 1px solid var(--mac-border);
+}
+
+.theme-mac .badge-plan {
+  background: rgba(139, 233, 253, 0.15);
+  color: var(--mac-cyan);
+  border-color: rgba(139, 233, 253, 0.4);
+}
+
+.theme-mac .badge-cooling,
+.theme-mac .badge-warn {
+  background: rgba(255, 184, 108, 0.2);
+  color: var(--mac-orange);
+  border-color: var(--mac-orange);
+}
+
+.theme-mac .badge-disabled {
+  background: rgba(255, 255, 255, 0.05);
+  color: #6272a4;
+  border-color: transparent;
+}
+
+.theme-mac .badge-credits {
+  background: rgba(80, 250, 123, 0.15);
+  color: var(--mac-green);
+  border-color: rgba(80, 250, 123, 0.4);
+}
+
+.theme-mac .summary-reset-row {
+  background: rgba(139, 233, 253, 0.08);
+  color: var(--mac-cyan);
+  border: 1px solid rgba(139, 233, 253, 0.2);
+  font-family: var(--font-mono);
+}
+
+.theme-mac .summary-reset-kind {
+  color: var(--mac-yellow);
+}
+
+.theme-mac .summary-reset-time {
+  color: var(--mac-cyan);
+}
+
+.theme-mac .summary-reset-banner {
+  background: rgba(139, 233, 253, 0.1);
+  color: var(--mac-cyan);
+  border: 1px solid rgba(139, 233, 253, 0.25);
+}
+
+.theme-mac .progress-track {
+  background: rgba(255, 255, 255, 0.1);
+  height: 5px;
+}
+
+.theme-mac .progress-fill {
+  background: var(--mac-cyan);
+}
+
+.theme-mac .bar-low .progress-fill {
+  background: var(--mac-red);
+}
+
+.theme-mac .bar-med .progress-fill {
+  background: var(--mac-yellow);
+}
+
+.theme-mac .summary-stat-label {
+  color: var(--mac-dim);
+}
+
+.theme-mac .summary-stat-val .sum-pct {
+  color: var(--mac-cyan);
+}
+
+.theme-mac .page-note {
+  color: var(--mac-dim);
+  font-family: var(--font-mono);
+}
+
+.theme-mac .card-err-box {
+  background: rgba(255, 85, 85, 0.15);
+  border: 1px solid rgba(255, 85, 85, 0.4);
+  color: var(--mac-red);
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+}

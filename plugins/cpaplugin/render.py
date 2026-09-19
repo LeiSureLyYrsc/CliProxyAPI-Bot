@@ -22,6 +22,8 @@ from .quota import (
     sort_windows,
 )
 
+from .theme_loader import get_theme_registry
+
 DEFAULT_CARDS_PER_ROW = 4
 GRID_ROWS_PER_IMAGE = 2
 CARDS_PER_IMAGE = 8
@@ -33,7 +35,6 @@ def _chunks(items: list[Any], size: int) -> list[list[Any]]:
 
 _ASSETS = Path(__file__).resolve().parent / "assets"
 _TEMPLATE = (_ASSETS / "quota.html").read_text(encoding="utf-8")
-_CSS = (_ASSETS / "quota.css").read_text(encoding="utf-8")
 _BRANDS_DIR = _ASSETS / "brands"
 
 _BADGES = {
@@ -95,7 +96,7 @@ def get_render_settings_adapter() -> dict[str, Any]:
     """
     隔离读取渲染配置，若后端模块存在 get_render_settings() 则调用，
     否则基于默认值回退。
-    返回包含 theme ('shadcn'|'mac'|'md3'|'winxp') 和 cards_per_row (1..6) 的字典。
+    返回包含 canonical theme 和 cards_per_row (1..6) 的字典。
     """
     try:
         from . import render_settings  # type: ignore
@@ -111,21 +112,13 @@ def get_render_settings_adapter() -> dict[str, Any]:
     except Exception:
         pass
 
-    return _normalize_settings({"theme": "shadcn", "cards_per_row": DEFAULT_CARDS_PER_ROW})
+    return _normalize_settings({"theme": "default", "cards_per_row": DEFAULT_CARDS_PER_ROW})
 
 
 def _normalize_settings(raw: dict[str, Any]) -> dict[str, Any]:
-    raw_theme = str(raw.get("theme") or "shadcn").strip().lower()
-    if raw_theme in {"mac", "terminal", "dark-glass", "macos"}:
-        theme = "mac"
-    elif raw_theme in {"md3", "material", "material3", "android"}:
-        theme = "md3"
-    elif raw_theme == "winxp":
-        theme = "winxp"
-    elif raw_theme == "win7":
-        theme = "win7"
-    else:
-        theme = "shadcn"
+    registry = get_theme_registry()
+    raw_theme = str(raw.get("theme") or "default").strip().lower()
+    theme = registry.resolve_theme_name(raw_theme)
 
     try:
         cols = int(raw.get("cards_per_row", DEFAULT_CARDS_PER_ROW))
@@ -462,16 +455,16 @@ def build_platform_html(
 ) -> str:
     """
     构建平台配额 HTML。
-    - theme: 'shadcn' | 'mac' | 'md3' | 'winxp' | 'win7'
+    - theme: 主题名或别名（如 'default', 'shadcn', 'mac', 'md3', 'winxp', 'win7'）
     - cards_per_row: 1..6
     - page: 当前页码
     - pages: 总页码
     - Summary 卡片仅在 page == 1 时作为第 1 个网格单元插入。
     """
     settings = get_render_settings_adapter()
-    actual_theme = (theme or settings.get("theme") or "shadcn").lower()
-    if actual_theme not in {"shadcn", "mac", "md3", "winxp", "win7"}:
-        actual_theme = "shadcn"
+    registry = get_theme_registry()
+    target_theme_name = theme or settings.get("theme") or "default"
+    theme_obj = registry.get_theme(target_theme_name)
 
     cols = cards_per_row or settings.get("cards_per_row", DEFAULT_CARDS_PER_ROW)
     cols = max(1, min(6, int(cols)))
@@ -483,7 +476,7 @@ def build_platform_html(
     grid_cells = []
     if int(page) == 1:
         # Summary 卡片是第 1 个网格单元
-        summary_cell = build_summary_card_html(section, section.accounts, actual_theme)
+        summary_cell = build_summary_card_html(section, section.accounts, theme_obj.name)
         grid_cells.append(summary_cell)
 
     # 账号卡片
@@ -493,72 +486,21 @@ def build_platform_html(
     grid_content = "".join(grid_cells)
     page_note = f'<div class="page-note">第 {page} / {pages} 页</div>' if pages > 1 else ""
 
-    if actual_theme == "mac":
-        sheet_inner = (
-            f'<div class="sheet-window">'
-            f'<div class="mac-titlebar">'
-            f'<div class="mac-controls">'
-            f'<span class="mac-btn mac-btn-close"></span>'
-            f'<span class="mac-btn mac-btn-min"></span>'
-            f'<span class="mac-btn mac-btn-max"></span>'
-            f'</div>'
-            f'<div class="mac-window-title">{html.escape(section.title)} 配额监控</div>'
-            f'</div>'
-            f'<div class="grid">{grid_content}</div>'
-            f'{page_note}'
-            f'</div>'
-        )
-    elif actual_theme == "winxp":
-        sheet_inner = (
-            f'<div class="xp-window">'
-            f'<div class="xp-titlebar">'
-            f'<div class="xp-titlebar-icon"></div>'
-            f'<div class="xp-titlebar-text">{html.escape(section.title)} 配额监控</div>'
-            f'<div class="xp-titlebar-controls">'
-            f'<button class="xp-btn-ctrl xp-btn-min" aria-label="Minimize"></button>'
-            f'<button class="xp-btn-ctrl xp-btn-max" aria-label="Maximize"></button>'
-            f'<button class="xp-btn-ctrl xp-btn-close" aria-label="Close"></button>'
-            f'</div>'
-            f'</div>'
-            f'<div class="xp-window-body">'
-            f'<div class="grid">{grid_content}</div>'
-            f'{page_note}'
-            f'</div>'
-            f'</div>'
-        )
-    elif actual_theme == "win7":
-        sheet_inner = (
-            f'<div class="w7-window">'
-            f'<div class="w7-titlebar">'
-            f'<div class="w7-titlebar-icon"></div>'
-            f'<div class="w7-titlebar-text">{html.escape(section.title)} 配额监控</div>'
-            f'<div class="w7-titlebar-controls">'
-            f'<button class="w7-btn-ctrl w7-btn-min" aria-label="Minimize"></button>'
-            f'<button class="w7-btn-ctrl w7-btn-max" aria-label="Maximize"></button>'
-            f'<button class="w7-btn-ctrl w7-btn-close" aria-label="Close"></button>'
-            f'</div>'
-            f'</div>'
-            f'<div class="w7-window-body">'
-            f'<div class="grid">{grid_content}</div>'
-            f'{page_note}'
-            f'</div>'
-            f'</div>'
-        )
-    else:
-        sheet_inner = (
-            f'<div class="grid">{grid_content}</div>'
-            f'{page_note}'
-        )
-
-    theme_class = f"theme-{actual_theme}"
-    body = (
-        f'<div class="sheet {theme_class} platform-{html.escape(section.platform)}">'
-        f'{sheet_inner}'
-        f'</div>'
+    sheet_inner = theme_obj.render_wrapper(
+        title=html.escape(section.title),
+        grid=grid_content,
+        page_note=page_note,
     )
 
-    css = _CSS.replace("__WIDTH__", str(canvas_w)).replace("__COLS__", str(cols))
-    return _TEMPLATE.replace("__CSS__", css).replace("__BODY__", body)
+    theme_class = theme_obj.css_class
+    body = (
+        f'<div class="sheet {theme_class} platform-{html.escape(section.platform)}">'
+        f"{sheet_inner}"
+        f"</div>"
+    )
+
+    full_css = (registry.base_css + "\n" + theme_obj.css).replace("__WIDTH__", str(canvas_w)).replace("__COLS__", str(cols))
+    return _TEMPLATE.replace("__CSS__", full_css).replace("__BODY__", body)
 
 
 async def render_platform_images(section: PlatformQuota) -> list[bytes]:
@@ -566,7 +508,7 @@ async def render_platform_images(section: PlatformQuota) -> list[bytes]:
         raise RenderError(f"{section.title} 没有可出图的账号。")
 
     settings = get_render_settings_adapter()
-    theme = settings.get("theme", "shadcn")
+    theme = settings.get("theme", "default")
     cols = settings.get("cards_per_row", DEFAULT_CARDS_PER_ROW)
 
     pages_accounts = paginate_accounts(section.accounts, cards_per_row=cols, rows_per_page=GRID_ROWS_PER_IMAGE)

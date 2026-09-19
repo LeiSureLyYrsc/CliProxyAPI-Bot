@@ -1,0 +1,9 @@
+{
+  "name": "default",
+  "display_name": "Default (shadcn)",
+  "css_class": "theme-shadcn",
+  "aliases": [
+    "shadcn"
+  ],
+  "description": "Sleek, modern UI inspired by shadcn/ui neutral zinc styling"
+}

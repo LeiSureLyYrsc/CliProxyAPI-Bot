@@ -62,7 +62,9 @@ class RenderSettingsTests(unittest.TestCase):
         set_theme("mac")
         self.assertEqual(get_render_settings().theme, "mac")
         set_theme("default")
-        self.assertEqual(get_render_settings().theme, "shadcn")
+        self.assertEqual(get_render_settings().theme, "default")
+        set_theme("shadcn")
+        self.assertEqual(get_render_settings().theme, "default")
         set_theme("md3")
         self.assertEqual(get_render_settings().theme, "md3")
         set_theme("winxp")
@@ -142,10 +144,10 @@ class RenderSettingsTests(unittest.TestCase):
         import cpaplugin.render_settings as rs
 
         reset_render_settings_cache()
-        use_memory_render_settings({"theme": "shadcn", "cards_per_row": 4})
+        use_memory_render_settings({"theme": "default", "cards_per_row": 4})
         rs._memory_only = False
         current = get_render_settings()
-        self.assertEqual(current.theme, "shadcn")
+        self.assertEqual(current.theme, "default")
 
         blocker = Path(self.temp_dir.name) / "not-a-directory"
         blocker.write_text("file", encoding="utf-8")
@@ -155,7 +157,7 @@ class RenderSettingsTests(unittest.TestCase):
         try:
             with self.assertRaises(ValueError):
                 set_theme("mac")
-            self.assertEqual(get_render_settings().theme, "shadcn")
+            self.assertEqual(get_render_settings().theme, "default")
             self.assertEqual(get_render_settings().cards_per_row, 4)
         finally:
             rs.get_render_settings_path = orig_get_path

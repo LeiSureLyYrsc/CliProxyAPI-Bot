@@ -37,11 +37,11 @@ from .oauth import (
 from .hub import HubError, get_hub
 from .query import QuotaSelection, parse_quota_command
 from .render_settings import (
-    ALLOWED_THEMES,
     get_render_settings,
     set_cards_per_row,
     set_theme,
 )
+from .theme_loader import get_theme_registry
 from .quota import (
     PLATFORM_TITLES,
     QuotaBoard,
@@ -166,7 +166,7 @@ cpa = on_alconna(
         ),
         Subcommand(
             "theme",
-            Subcommand("set", Args["name", str], help_text="设置额度图主题：cpa theme set default|mac|md3|winxp|win7"),
+            Subcommand("set", Args["name", str], help_text="设置额度图主题：cpa theme set <主题>"),
             help_text="查看或设置额度图主题",
         ),
         Subcommand(
@@ -257,9 +257,9 @@ def _cpa_help_text(providers: str) -> str:
             "",
             "【主题与排版】修改后立刻生效并持久化保存。",
             "  cpa theme",
-            "    查看当前额度图主题。",
-            "  cpa theme set default|mac|md3|winxp|win7",
-            "    设置额度图主题（default 对应 shadcn；winxp 为 Windows XP Luna 风格；win7 为 Windows 7 Aero 玻璃风格）。",
+            "    查看当前额度图主题与可选主题列表。",
+            "  cpa theme set <主题>",
+            "    设置额度图主题（如 default, mac, md3, winxp, win7 等）。",
             "  cpa card",
             "    查看当前卡片排版设置。",
             "  cpa card row N",
@@ -444,7 +444,8 @@ async def cpa_theme_set(name: Query[str] = Query("theme.set.name")) -> None:
     try:
         settings = set_theme(theme_name)
     except ValueError as exc:
-        await UniMessage(str(exc)).finish()
+        allowed = " / ".join(get_theme_registry().list_canonical_names())
+        await UniMessage(f"{exc}\n可用主题：{allowed}").finish()
         return
     await UniMessage(f"已将额度图主题设置为「{settings.theme}」。").finish()
 
@@ -452,8 +453,20 @@ async def cpa_theme_set(name: Query[str] = Query("theme.set.name")) -> None:
 @cpa.assign("theme", additional=_without("theme.set"))
 async def cpa_theme_get() -> None:
     settings = get_render_settings()
-    allowed = "/".join(ALLOWED_THEMES)
-    await UniMessage(f"当前额度图主题：{settings.theme}（可选：{allowed}）\n修改主题：cpa theme set <主题>").finish()
+    registry = get_theme_registry()
+    allowed = " / ".join(registry.list_canonical_names())
+    aliases = registry.get_alias_map()
+    alias_notes = [
+        f"{alias} → {canonical}"
+        for alias, canonical in sorted(aliases.items())
+        if alias != canonical
+    ]
+    alias_text = f"\n别名：{' / '.join(alias_notes)}" if alias_notes else ""
+    await UniMessage(
+        f"当前额度图主题：{settings.theme}\n"
+        f"可选主题：{allowed}{alias_text}\n"
+        f"修改主题：cpa theme set <主题>"
+    ).finish()
 
 
 @cpa.assign("card.row")

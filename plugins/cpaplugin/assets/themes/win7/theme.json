@@ -1,0 +1,7 @@
+{
+  "name": "win7",
+  "display_name": "Windows 7 (Aero)",
+  "css_class": "theme-win7",
+  "aliases": [],
+  "description": "Windows 7 Aero Glass visual style with glowing titlebar and emerald progress bars"
+}
