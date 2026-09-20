@@ -183,11 +183,11 @@ class RenderThemesAndFeaturesTests(unittest.TestCase):
             accounts=[xai_account],
             window_remain_sum={"billing": 80.0},
             window_remain_count={"billing": 1},
-            window_labels={"billing": "周总额度"},
+            window_labels={"billing": "周额度"},
         )
         html_doc = build_platform_html(section, [xai_account])
-        # 验证包含周总额度与子项
-        self.assertIn("周总额度", html_doc)
+        # 验证包含周额度与子项
+        self.assertIn("周额度", html_doc)
         self.assertIn("GrokBuild", html_doc)
         self.assertIn("GrokChat", html_doc)
         self.assertIn("GrokImagine", html_doc)
@@ -195,8 +195,8 @@ class RenderThemesAndFeaturesTests(unittest.TestCase):
         # 验证分组标题
         self.assertIn("xAI", html_doc)
 
-        # 验证刷新提示只属于周总额度，子项没有刷新提示
-        # 统计 bar-reset-hint 在账号卡片中的数量，仅有 1 个（周总额度的刷新）
+        # 验证刷新提示只属于周额度，子项没有刷新提示
+        # 统计 bar-reset-hint 在账号卡片中的数量，仅有 1 个（周额度的刷新）
         card_start = html_doc.find('title="grok-user-1"')
         card_slice = html_doc[card_start:]
         self.assertEqual(card_slice.count("bar-reset-hint"), 1)

@@ -152,13 +152,72 @@ class ParserTests(unittest.TestCase):
             }
         )
         by_id = {item.id: item for item in windows}
-        self.assertEqual(by_id["billing"].label, "周总额度")
+        self.assertEqual(by_id["billing"].label, "周额度")
         self.assertEqual(by_id["billing"].remaining_percent, 87.0)
         self.assertIsNotNone(by_id["billing"].reset_at)
         self.assertEqual(by_id["grok-build"].used_percent, 8.0)
         self.assertIsNone(by_id["grok-build"].reset_at)
         self.assertEqual(by_id["grok-chat"].used_percent, 5.0)
         self.assertIsNone(by_id["grok-chat"].reset_at)
+
+    def test_xai_real_cpa_product_usage_response(self) -> None:
+        # 使用真实 CPA Management Center 响应
+        real_response = {
+            "config": {
+                "creditUsagePercent": 45,
+                "productUsage": [
+                    {"product": "GrokImagine", "usagePercent": 30},
+                    {"product": "GrokChat", "usagePercent": 50},
+                    {"product": "GrokBuild", "usagePercent": 20},
+                ],
+                "currentPeriod": {"type": "weekly", "end": "2026-08-24T05:33:00Z"},
+                "billingPeriodEnd": "2026-08-24T05:33:00Z",
+            }
+        }
+        windows = parse_xai_billing(real_response)
+        # 断言排序：billing -> GrokBuild -> GrokChat -> GrokImagine
+        ids = [w.id for w in windows]
+        self.assertEqual(ids, ["billing", "grok-build", "grok-chat", "grok-imagine"])
+        by_id = {w.id: w for w in windows}
+        self.assertEqual(by_id["billing"].label, "周额度")
+        self.assertEqual(by_id["billing"].used_percent, 45.0)
+        self.assertEqual(by_id["billing"].remaining_percent, 55.0)
+        self.assertIsNotNone(by_id["billing"].reset_at)
+
+        self.assertEqual(by_id["grok-build"].label, "GrokBuild")
+        self.assertEqual(by_id["grok-build"].used_percent, 20.0)
+        self.assertIsNone(by_id["grok-build"].reset_at)
+
+        self.assertEqual(by_id["grok-chat"].label, "GrokChat")
+        self.assertEqual(by_id["grok-chat"].used_percent, 50.0)
+        self.assertIsNone(by_id["grok-chat"].reset_at)
+
+        self.assertEqual(by_id["grok-imagine"].label, "GrokImagine")
+        self.assertEqual(by_id["grok-imagine"].used_percent, 30.0)
+        self.assertIsNone(by_id["grok-imagine"].reset_at)
+
+    def test_xai_product_usage_snake_case_and_current_period_end_fallback(self) -> None:
+        # 覆盖 product_usage 蛇形命名与 current_period.end 回退
+        snake_response = {
+            "credit_usage_percent": 60,
+            "product_usage": [
+                {"name": "GrokVoice", "used_percent": 15},
+                {"name": "GrokImagine", "credit_usage_percent": 25},
+            ],
+            "current_period": {
+                "end": "2026-09-01T12:00:00Z"
+            }
+        }
+        windows = parse_xai_billing(snake_response)
+        ids = [w.id for w in windows]
+        self.assertEqual(ids, ["billing", "grok-imagine", "grok-voice"])
+        by_id = {w.id: w for w in windows}
+        self.assertEqual(by_id["billing"].used_percent, 60.0)
+        self.assertIsNotNone(by_id["billing"].reset_at)
+        self.assertEqual(by_id["grok-imagine"].used_percent, 25.0)
+        self.assertIsNone(by_id["grok-imagine"].reset_at)
+        self.assertEqual(by_id["grok-voice"].used_percent, 15.0)
+        self.assertIsNone(by_id["grok-voice"].reset_at)
 
     def test_xai_dynamic_products_grok_imagine_and_voice(self) -> None:
         # 覆盖 GrokImagine, 未知 GrokVoice, config 嵌套, 重复列表去重, 列表优先于顶层固定字段
@@ -180,7 +239,7 @@ class ParserTests(unittest.TestCase):
         ids = [w.id for w in windows]
         self.assertEqual(ids, ["billing", "grok-build", "grok-chat", "grok-imagine", "grok-voice"])
         by_id = {w.id: w for w in windows}
-        self.assertEqual(by_id["billing"].label, "周总额度")
+        self.assertEqual(by_id["billing"].label, "周额度")
         self.assertIsNotNone(by_id["billing"].reset_at)
         self.assertEqual(by_id["grok-build"].used_percent, 10.0)  # 列表优先，不是 99.0
         self.assertIsNone(by_id["grok-build"].reset_at)

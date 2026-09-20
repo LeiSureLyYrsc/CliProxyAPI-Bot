@@ -315,7 +315,7 @@ curl -X PATCH -H 'Authorization: Bearer <MANAGEMENT_KEY>' \
 
 > **额度与订阅到期字段说明**：
 > - **Codex 套餐到期**：`chatgpt_subscription_active_until`（或 `subscription_active_until`）表示 ChatGPT 订阅的当前有效截止/续期节点；它不同于 OAuth Access Token 的过期时间 `expires_at`，也不同于 WHAM 5h/周额度刷新时间 `reset_at`。CPA 在 `/auth-files` 列表的条目中可能直接暴露 `id_token` 安全 claims，Bot 直接读取此类字段即可提取套餐到期和静态计划，无需下载原始凭证或自行解析原始 JWT。
-> - **xAI / Grok 配额**：周总额度来自 `creditUsagePercent`（对应 ID `billing`），刷新倒计时由 `billingPeriodEnd` 提供并仅属于周总额度；`products`/`usages` 中的子项（如 `GrokBuild`、`GrokChat`、`GrokImagine` 以及未来动态项）为细分产品用量明细，属于其他额度且无独立 reset 刷新节点。
+> - **xAI / Grok 配额**：周额度来自 `creditUsagePercent`（对应 ID `billing`），刷新倒计时由 `billingPeriodEnd`（缺失时回退 `currentPeriod.end` / `current_period.end`）提供并仅属于周额度；`productUsage` / `product_usage`（兼容 `products` / `usages`）中的子项（如 `GrokBuild`、`GrokChat`、`GrokImagine` 以及未来动态项）为细分产品用量明细，属于其他额度且无独立 reset 刷新节点。
 
 配置型 API-key 记录通过各自的 `excluded-models` 禁用；插件虚拟子项不能独立改状态。
 

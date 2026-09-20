@@ -1224,10 +1224,19 @@ def parse_xai_billing(payload: dict[str, Any]) -> list[QuotaWindow]:
         config.get("usedPercent"),
         payload.get("creditUsagePercent"),
     )
-    period_end = config.get("billingPeriodEnd") or config.get("billing_period_end") or payload.get("billingPeriodEnd")
+    current_period = _as_dict(config.get("currentPeriod")) or _as_dict(config.get("current_period")) or _as_dict(payload.get("currentPeriod")) or _as_dict(payload.get("current_period")) or {}
+    period_end = (
+        config.get("billingPeriodEnd")
+        or config.get("billing_period_end")
+        or payload.get("billingPeriodEnd")
+        or payload.get("billing_period_end")
+        or current_period.get("end")
+        or current_period.get("end_time")
+        or current_period.get("endTime")
+    )
     weekly = QuotaWindow(
         id="billing",
-        label="周总额度",
+        label="周额度",
         reset_label=_human_reset(period_end),
         reset_at=_parse_ts(str(period_end)) if period_end else None,
     )
@@ -1243,7 +1252,7 @@ def parse_xai_billing(payload: dict[str, Any]) -> list[QuotaWindow]:
     for container in (payload, config if config is not payload else None):
         if not isinstance(container, dict):
             continue
-        for lk in ("products", "usages"):
+        for lk in ("productUsage", "product_usage", "products", "usages"):
             val = container.get(lk)
             if isinstance(val, list) and val not in lists_to_check:
                 lists_to_check.append(val)
