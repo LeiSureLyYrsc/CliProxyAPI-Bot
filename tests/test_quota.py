@@ -22,6 +22,7 @@ from cpaplugin.quota import (
     QuotaWindow,
     _build_board,
     _plan_from_auth_file,
+    _window_text,
     _wanted_files,
     format_quota_board,
     format_reset_zh,
@@ -261,6 +262,22 @@ class ParserTests(unittest.TestCase):
         by_id = {w.id: w for w in windows}
         self.assertEqual(by_id["grok-build"].used_percent, 15.0)
         self.assertEqual(by_id["grok-chat"].used_percent, 20.0)
+
+    def test_xai_text_uses_consumed_percentage_for_products(self) -> None:
+        weekly = QuotaWindow(
+            id="billing",
+            label="周额度",
+            used_percent=20.0,
+            remaining_percent=80.0,
+        )
+        product = QuotaWindow(
+            id="grok-build",
+            label="GrokBuild",
+            used_percent=10.0,
+            remaining_percent=90.0,
+        )
+        self.assertEqual(_window_text(weekly, compact=True), "周额度 剩 80%")
+        self.assertEqual(_window_text(product, compact=True), "GrokBuild 已使用 10%")
 
 
 class BoardFormatTests(unittest.TestCase):

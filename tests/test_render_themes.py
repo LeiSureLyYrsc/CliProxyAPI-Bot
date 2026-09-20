@@ -21,6 +21,7 @@ from cpaplugin.quota import (
     _build_board,
 )
 from cpaplugin.render import (
+    _bar_html,
     build_platform_html,
     calculate_canvas_width,
     get_platform_icon_uri,
@@ -201,6 +202,38 @@ class RenderThemesAndFeaturesTests(unittest.TestCase):
         card_slice = html_doc[card_start:]
         self.assertEqual(card_slice.count("bar-reset-hint"), 1)
         self.assertEqual(card_slice.count("后刷新额度"), 1)
+
+        # 周额度按剩余展示；Grok 产品子项按已使用展示，进度条宽度也是已使用比例。
+        self.assertIn("剩 80%", card_slice)
+        self.assertIn("已使用 10%", card_slice)
+        self.assertIn("已使用 5%", card_slice)
+        self.assertIn("已使用 15%", card_slice)
+
+    def test_grok_product_bar_uses_consumed_percentage(self) -> None:
+        low_usage = _bar_html(
+            QuotaWindow(
+                id="grok-build",
+                label="GrokBuild",
+                used_percent=10.0,
+                remaining_percent=90.0,
+            )
+        )
+        self.assertIn("已使用 10%", low_usage)
+        self.assertIn("width: 10.0%", low_usage)
+        self.assertNotIn("bar-low", low_usage)
+        self.assertNotIn("bar-med", low_usage)
+
+        high_usage = _bar_html(
+            QuotaWindow(
+                id="grok-imagine",
+                label="GrokImagine",
+                used_percent=90.0,
+                remaining_percent=10.0,
+            )
+        )
+        self.assertIn("已使用 90%", high_usage)
+        self.assertIn("width: 90.0%", high_usage)
+        self.assertIn("bar-low", high_usage)
 
     def test_summary_card_content_requirements(self) -> None:
         html_doc = build_platform_html(self.sample_section, self.sample_accounts[:7], page=1, pages=2)

@@ -1646,7 +1646,9 @@ def _format_platform(section: PlatformQuota, account_limit: int) -> list[str]:
 
 
 def _window_text(window: QuotaWindow, *, compact: bool = False) -> str:
-    if window.remaining_percent is not None:
+    if window.id.startswith("grok-") and window.used_percent is not None:
+        body = f"已使用 {window.used_percent:.0f}%"
+    elif window.remaining_percent is not None:
         body = f"剩 {window.remaining_percent:.0f}%"
     elif window.used_percent is not None:
         body = f"已用 {window.used_percent:.0f}%"

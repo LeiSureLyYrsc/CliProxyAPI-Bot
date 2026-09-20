@@ -357,6 +357,7 @@ def _group_html(title: str, windows: list[QuotaWindow]) -> str:
 def _bar_html(window: QuotaWindow) -> str:
     remain = window.remaining_percent
     used = window.used_percent
+    is_grok_product = window.id.startswith("grok-")
     if remain is None and used is not None:
         remain = max(0.0, 100.0 - used)
     elif (
@@ -367,9 +368,12 @@ def _bar_html(window: QuotaWindow) -> str:
     ):
         remain = max(0.0, min(100.0, (window.remaining / window.limit) * 100.0))
 
-    width = 0.0 if remain is None else max(0.0, min(100.0, remain))
+    display_percent = used if is_grok_product and used is not None else remain
+    width = 0.0 if display_percent is None else max(0.0, min(100.0, display_percent))
 
-    if remain is not None:
+    if is_grok_product and used is not None:
+        value_text = f"已使用 {used:.0f}%"
+    elif remain is not None:
         value_text = f"剩 {remain:.0f}%"
     elif used is not None:
         value_text = f"用 {used:.0f}%"
@@ -384,7 +388,12 @@ def _bar_html(window: QuotaWindow) -> str:
     )
 
     bar_level_class = ""
-    if remain is not None:
+    if is_grok_product and used is not None:
+        if used >= 85:
+            bar_level_class = "bar-low"
+        elif used >= 65:
+            bar_level_class = "bar-med"
+    elif remain is not None:
         if remain <= 15:
             bar_level_class = "bar-low"
         elif remain <= 35:
