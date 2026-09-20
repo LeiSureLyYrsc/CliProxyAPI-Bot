@@ -209,6 +209,17 @@ class RenderThemesAndFeaturesTests(unittest.TestCase):
         self.assertIn("已使用 5%", card_slice)
         self.assertIn("已使用 15%", card_slice)
 
+        # 总统计卡片中的 Grok 子项同样按已使用比例聚合并明确标注。
+        summary_end = html_doc.find('title="grok-user-1"')
+        summary_slice = html_doc[:summary_end]
+        self.assertIn("GrokBuild", summary_slice)
+        self.assertIn("已使用 10%", summary_slice)
+        self.assertIn("均已使用 10%", summary_slice)
+        self.assertIn("GrokChat", summary_slice)
+        self.assertIn("已使用 5%", summary_slice)
+        self.assertIn("GrokImagine", summary_slice)
+        self.assertIn("已使用 15%", summary_slice)
+
     def test_grok_product_bar_uses_consumed_percentage(self) -> None:
         low_usage = _bar_html(
             QuotaWindow(

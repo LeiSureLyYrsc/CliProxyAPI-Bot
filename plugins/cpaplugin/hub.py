@@ -15,6 +15,8 @@ from pydantic import ValidationError
 from .config import Config
 from .protocol import (
     PROTOCOL_VERSION,
+    CodexRefreshPayload,
+    CodexRefreshResult,
     Envelope,
     QuotaQueryPayload,
     QuotaQueryResult,
@@ -35,11 +37,17 @@ class HubError(Exception):
 
 
 @dataclass
+class PendingRequest:
+    action: str
+    future: asyncio.Future[dict[str, Any]]
+
+
+@dataclass
 class ClientSession:
     name: str
     websocket: WebSocket
     session_id: str
-    pending: dict[str, asyncio.Future[dict[str, Any]]] = field(default_factory=dict)
+    pending: dict[str, PendingRequest] = field(default_factory=dict)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
@@ -161,12 +169,23 @@ class Hub:
             return
         if envelope.type != "response" or not envelope.id:
             return
-        future = session.pending.get(envelope.id)
-        if future is None or future.done():
+        pending_item = session.pending.get(envelope.id)
+        if pending_item is None or pending_item.future.done():
             return
+        future = pending_item.future
         if envelope.ok is False:
             future.set_exception(HubError(envelope.error or "客户端返回失败"))
             return
+
+        if pending_item.action == "codex.refresh":
+            try:
+                refresh_res = CodexRefreshResult.model_validate(envelope.result or {})
+            except ValidationError as exc:
+                future.set_exception(HubError(f"客户端返回无法解析：{exc}"))
+                return
+            future.set_result(refresh_res.model_dump())
+            return
+
         try:
             result = QuotaQueryResult.model_validate(envelope.result or {})
         except ValidationError as exc:
@@ -207,7 +226,7 @@ class Hub:
             session = self._sessions.get(name)
             if session is None:
                 raise HubError(f"客户端 {name} 未连接。")
-            session.pending[req_id] = future
+            session.pending[req_id] = PendingRequest(action="quota.query", future=future)
         message = Envelope(
             version=PROTOCOL_VERSION,
             type="request",
@@ -227,6 +246,44 @@ class Hub:
             raise
         except Exception as exc:
             raise HubError(f"客户端 {name} 查询失败。") from exc
+        finally:
+            session.pending.pop(req_id, None)
+
+    async def refresh_codex(
+        self,
+        name: str,
+        account: str,
+        *,
+        timeout: float | None = None,
+    ) -> CodexRefreshResult:
+        cfg = self._cfg
+        payload = CodexRefreshPayload(account=account)
+        req_id = str(uuid.uuid4())
+        future: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
+        async with self._lock:
+            session = self._sessions.get(name)
+            if session is None:
+                raise HubError(f"客户端 {name} 未连接。")
+            session.pending[req_id] = PendingRequest(action="codex.refresh", future=future)
+        message = Envelope(
+            version=PROTOCOL_VERSION,
+            type="request",
+            id=req_id,
+            action="codex.refresh",
+            payload=payload.model_dump(),
+        )
+        try:
+            async with session.lock:
+                await session.websocket.send_json(message.model_dump())
+                wait = timeout if timeout is not None else (cfg.cpa_server_request_timeout if cfg else 40.0)
+                data = await asyncio.wait_for(future, timeout=max(1.0, wait))
+            return CodexRefreshResult.model_validate(data)
+        except asyncio.TimeoutError as exc:
+            raise HubError(f"客户端 {name} 刷新超时。") from exc
+        except HubError:
+            raise
+        except Exception as exc:
+            raise HubError(f"客户端 {name} 刷新失败。") from exc
         finally:
             session.pending.pop(req_id, None)
 
@@ -269,9 +326,9 @@ def _tokens_match(provided: str, expected: str) -> bool:
 async def _fail_pending(session: ClientSession, reason: str) -> None:
     pending = list(session.pending.values())
     session.pending.clear()
-    for future in pending:
-        if not future.done():
-            future.set_exception(HubError(reason))
+    for item in pending:
+        if not item.future.done():
+            item.future.set_exception(HubError(reason))
 
 
 async def _close_ws(websocket: WebSocket, *, code: int) -> None:

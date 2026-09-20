@@ -229,12 +229,15 @@ def build_summary_card_html(
     stats_rows = []
     for agg in agg_windows:
         # 显示格式：Gemini 5h 344% (均 86% · 4号)
+        is_used = agg.get("mode") == "used"
+        sum_text = f'已使用 {agg["sum_percent"]:.0f}%' if is_used else f'{agg["sum_percent"]:.0f}%'
+        avg_text = f'均已使用 {agg["avg_percent"]:.0f}%' if is_used else f'均 {agg["avg_percent"]:.0f}%'
         stats_rows.append(
             f'<div class="summary-stat-row">'
             f'<span class="summary-stat-label">{html.escape(agg["label"])}</span>'
             f'<span class="summary-stat-val">'
-            f'<span class="sum-pct">{agg["sum_percent"]:.0f}%</span> '
-            f'<span class="avg-cnt">(均 {agg["avg_percent"]:.0f}% · {agg["count"]}号)</span>'
+            f'<span class="sum-pct">{sum_text}</span> '
+            f'<span class="avg-cnt">({avg_text} · {agg["count"]}号)</span>'
             f'</span>'
             f'</div>'
         )

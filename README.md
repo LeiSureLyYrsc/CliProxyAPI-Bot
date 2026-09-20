@@ -122,7 +122,7 @@ Bot 与 CPA 不在同一台机器时，CPA 需要 `remote-management.allow-remot
 | `cpa quota --text` | 只发文字总览（排障 / 无浏览器时） |
 | `cpa quota cooling` | 只看冷却（本地 CPA 状态，不打上游） |
 | `cpa quota reset <查询词>` | `POST /reset-quota`（使用完整 `auth_index`） |
-| `cpa codex refresh <查询词>` | 消耗 1 次 Codex 官方重置次数并刷新额度。查询词可用邮箱/别名，只匹配 Codex。仅 `CODEX_REFRESH_ADMIN` |
+| `cpa codex refresh <查询词> [--client|-c <客户端>]` | 消耗 1 次 Codex 官方重置次数并刷新额度。未指定客户端时为本机，指定远程客户端需目标 Client 开启 `CODEX_REFRESH_ENABLED=true`。查询词可用邮箱/别名，只匹配 Codex。协议不传输 auth_index。仅 `CODEX_REFRESH_ADMIN` |
 | `cpa login <渠道>` | 启动 OAuth / 设备码。授权完成后把浏览器回调链接发回聊天 |
 | `cpa login callback <回调链接>` | 手动提交 localhost 回调 URL |
 | `cpa login cancel` | 取消当前登录 |

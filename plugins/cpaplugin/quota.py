@@ -729,24 +729,27 @@ def calculate_aggregate_windows(
     accts = accounts if accounts is not None else section.accounts
     win_sums: dict[str, float] = {}
     win_counts: dict[str, int] = {}
+    win_modes: dict[str, str] = {}
     win_labels: dict[str, str] = dict(getattr(section, "window_labels", {}) or {})
 
     for account in accts:
         for w in account.windows:
             win_labels.setdefault(w.id, w.label)
-            remain_pct = w.remaining_percent
-            if remain_pct is None and w.used_percent is not None:
-                remain_pct = max(0.0, 100.0 - w.used_percent)
+            is_grok_product = w.id.startswith("grok-")
+            pct = w.used_percent if is_grok_product else w.remaining_percent
+            win_modes[w.id] = "used" if is_grok_product else "remaining"
+            if pct is None and w.used_percent is not None:
+                pct = w.used_percent if is_grok_product else max(0.0, 100.0 - w.used_percent)
             elif (
-                remain_pct is None
+                pct is None
                 and w.remaining is not None
                 and w.limit is not None
                 and w.limit > 0
             ):
-                remain_pct = max(0.0, min(100.0, (w.remaining / w.limit) * 100.0))
+                pct = max(0.0, min(100.0, (w.remaining / w.limit) * 100.0))
 
-            if remain_pct is not None:
-                win_sums[w.id] = win_sums.get(w.id, 0.0) + remain_pct
+            if pct is not None:
+                win_sums[w.id] = win_sums.get(w.id, 0.0) + pct
                 win_counts[w.id] = win_counts.get(w.id, 0) + 1
 
     results = []
@@ -765,6 +768,7 @@ def calculate_aggregate_windows(
                 "sum_percent": total_pct,
                 "avg_percent": avg_pct,
                 "count": count,
+                "mode": win_modes.get(wid, "remaining"),
             }
         )
     return results

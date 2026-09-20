@@ -11,9 +11,16 @@ _pkg = types.ModuleType("cpaplugin")
 _pkg.__path__ = [str(_plugin_dir)]
 sys.modules.setdefault("cpaplugin", _pkg)
 
+from cpaplugin.commands import resolve_codex_refresh_target
 from cpaplugin.config import Config
-from cpaplugin.hub import ClientSession, Hub, HubError, authenticate_headers
-from cpaplugin.protocol import ALLOWED_ACTIONS, valid_client_name
+from cpaplugin.hub import ClientSession, Hub, HubError, PendingRequest, authenticate_headers
+from cpaplugin.protocol import (
+    ALLOWED_ACTIONS,
+    CodexRefreshPayload,
+    CodexRefreshResult,
+    QuotaQueryResult,
+    valid_client_name,
+)
 from cpaplugin.query import parse_quota_command
 from cpaplugin.quota import accounts_from_result, board_from_accounts
 
@@ -119,9 +126,25 @@ class HubAuthTests(unittest.TestCase):
         self.assertIn("本机", error)
 
     def test_query_action_only(self) -> None:
-        self.assertEqual(ALLOWED_ACTIONS, frozenset({"quota.query"}))
+        self.assertEqual(ALLOWED_ACTIONS, frozenset({"quota.query", "codex.refresh"}))
         self.assertNotIn("quota.reset", ALLOWED_ACTIONS)
-        self.assertNotIn("codex.refresh", ALLOWED_ACTIONS)
+
+
+class ProtocolDTOTests(unittest.TestCase):
+    def test_codex_refresh_payload(self) -> None:
+        payload = CodexRefreshPayload(account="  user@example.com  ")
+        self.assertEqual(payload.account, "user@example.com")
+        with self.assertRaises(Exception):
+            CodexRefreshPayload(account="")
+        with self.assertRaises(Exception):
+            CodexRefreshPayload(account="   ")
+
+    def test_codex_refresh_result(self) -> None:
+        res = CodexRefreshResult(message="已重置", remaining_credits=3)
+        self.assertEqual(res.message, "已重置")
+        self.assertEqual(res.remaining_credits, 3)
+        res_none = CodexRefreshResult(message="已重置")
+        self.assertIsNone(res_none.remaining_credits)
 
 
 class RemoteBoardTests(unittest.TestCase):
@@ -162,7 +185,7 @@ class HubResponseIdentityTests(unittest.IsolatedAsyncioTestCase):
         hub = Hub()
         session = ClientSession(name="Home", websocket=DummySocket(), session_id="s")  # type: ignore[arg-type]
         future = asyncio.get_running_loop().create_future()
-        session.pending["r1"] = future
+        session.pending["r1"] = PendingRequest(action="quota.query", future=future)
         cfg = Config(client_name="Server", cpa_server_client_keys={"Home": "secret-home"})
         await hub._on_message(
             session,
@@ -171,6 +194,116 @@ class HubResponseIdentityTests(unittest.IsolatedAsyncioTestCase):
         )
         with self.assertRaises(HubError):
             await future
+
+    async def test_quota_query_parsing_and_name_stamping(self) -> None:
+        class DummySocket:
+            pass
+
+        hub = Hub()
+        session = ClientSession(name="Home", websocket=DummySocket(), session_id="s")  # type: ignore[arg-type]
+        future = asyncio.get_running_loop().create_future()
+        session.pending["r1"] = PendingRequest(action="quota.query", future=future)
+        cfg = Config(client_name="Server", cpa_server_client_keys={"Home": "secret-home"})
+        await hub._on_message(
+            session,
+            {
+                "version": 1,
+                "type": "response",
+                "id": "r1",
+                "ok": True,
+                "result": {
+                    "client_name": "Home",
+                    "accounts": [{"platform": "codex", "name": "CX-1", "auth_index": "secret"}],
+                },
+            },
+            cfg,
+        )
+        res = await future
+        parsed = QuotaQueryResult.model_validate(res)
+        self.assertEqual(parsed.accounts[0].client_name, "Home")
+        self.assertEqual(parsed.accounts[0].auth_index, "")
+
+    async def test_codex_refresh_parsing(self) -> None:
+        class DummySocket:
+            pass
+
+        hub = Hub()
+        session = ClientSession(name="Home", websocket=DummySocket(), session_id="s")  # type: ignore[arg-type]
+        future = asyncio.get_running_loop().create_future()
+        session.pending["r2"] = PendingRequest(action="codex.refresh", future=future)
+        cfg = Config(client_name="Server", cpa_server_client_keys={"Home": "secret-home"})
+        await hub._on_message(
+            session,
+            {
+                "version": 1,
+                "type": "response",
+                "id": "r2",
+                "ok": True,
+                "result": {"message": "刷新成功：剩余 2 次", "remaining_credits": 2},
+            },
+            cfg,
+        )
+        res = await future
+        parsed = CodexRefreshResult.model_validate(res)
+        self.assertEqual(parsed.message, "刷新成功：剩余 2 次")
+        self.assertEqual(parsed.remaining_credits, 2)
+
+    async def test_error_response(self) -> None:
+        class DummySocket:
+            pass
+
+        hub = Hub()
+        session = ClientSession(name="Home", websocket=DummySocket(), session_id="s")  # type: ignore[arg-type]
+        future = asyncio.get_running_loop().create_future()
+        session.pending["r3"] = PendingRequest(action="codex.refresh", future=future)
+        cfg = Config(client_name="Server", cpa_server_client_keys={"Home": "secret-home"})
+        await hub._on_message(
+            session,
+            {
+                "version": 1,
+                "type": "response",
+                "id": "r3",
+                "ok": False,
+                "error": "客户端未开启 Codex 重置功能",
+            },
+            cfg,
+        )
+        with self.assertRaises(HubError) as cm:
+            await future
+        self.assertIn("未开启", str(cm.exception))
+
+
+class CodexRefreshTargetTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.cfg = Config(client_name="Server", cpa_server_client_keys={"Home": "secret-home"})
+        self.known = {"Server", "Home"}
+
+    def test_default_local_target(self) -> None:
+        target, query, err = resolve_codex_refresh_target("user@example.com", None, self.cfg, self.known)
+        self.assertEqual(target, "Server")
+        self.assertEqual(query, "user@example.com")
+        self.assertEqual(err, "")
+
+    def test_remote_target(self) -> None:
+        target, query, err = resolve_codex_refresh_target("user@example.com", "Home", self.cfg, self.known)
+        self.assertEqual(target, "Home")
+        self.assertEqual(query, "user@example.com")
+        self.assertEqual(err, "")
+
+    def test_invalid_client_target(self) -> None:
+        target, query, err = resolve_codex_refresh_target("user@example.com", "Bad Client/1", self.cfg, self.known)
+        self.assertEqual(target, "")
+        self.assertIn("非法", err)
+
+    def test_unknown_client_target(self) -> None:
+        target, query, err = resolve_codex_refresh_target("user@example.com", "Unknown", self.cfg, self.known)
+        self.assertEqual(target, "")
+        self.assertIn("未知", err)
+
+    def test_empty_query(self) -> None:
+        target, query, err = resolve_codex_refresh_target("  ", "Home", self.cfg, self.known)
+        self.assertEqual(target, "")
+        self.assertIn("不能为空", err)
 
 
 if __name__ == "__main__":

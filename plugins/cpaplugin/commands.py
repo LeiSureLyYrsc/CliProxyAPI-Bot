@@ -35,6 +35,7 @@ from .oauth import (
     submit_callback,
 )
 from .hub import HubError, get_hub
+from .protocol import normalize_client_name, valid_client_name
 from .query import QuotaSelection, parse_quota_command
 from .render_settings import (
     get_render_settings,
@@ -187,7 +188,12 @@ cpa = on_alconna(
         ),
         Subcommand(
             "codex",
-            Subcommand("refresh", Args["query", str], help_text="消耗一次 Codex 重置次数并刷新额度"),
+            Subcommand(
+                "refresh",
+                Args["query", str],
+                Option("--client|-c", Args["client", str], dest="client", help_text="指定客户端名称"),
+                help_text="消耗一次 Codex 重置次数并刷新额度",
+            ),
             help_text="Codex 上游额度操作",
         ),
         Subcommand(
@@ -200,7 +206,7 @@ cpa = on_alconna(
         meta=CommandMeta(
             description="CliProxyAPI 管理（仅管理员）",
             usage="发送 cpa 或 /cpa 查看完整帮助",
-            example="cpa status\ncpa auth list claude\ncpa alias set antigravity user@example.com AG-1\ncpa quota\ncpa quota antigravity\ncpa quota Home\ncpa quota antigravity Home\ncpa quota --all\ncpa quota --fresh\ncpa quota --text\ncpa codex refresh user@example.com\ncpa login claude",
+            example="cpa status\ncpa auth list claude\ncpa alias set antigravity user@example.com AG-1\ncpa quota\ncpa quota antigravity\ncpa quota Home\ncpa quota antigravity Home\ncpa quota --all\ncpa quota --fresh\ncpa quota --text\ncpa codex refresh user@example.com\ncpa codex refresh user@example.com --client Home\ncpa login claude",
         ),
     ),
     permission=CPA_ADMIN,
@@ -290,8 +296,9 @@ def _cpa_help_text(providers: str) -> str:
             "",
             "【Codex 重置】消耗官方重置次数，立刻刷新 5h/周窗口。",
             "  仅 CODEX_REFRESH_ADMIN 可执行；SUPERUSERS / CPA_ADMINS 不能代替该权限。",
-            "  cpa codex refresh <查询词>",
-            "    查询词：邮箱、别名、文件名、auth_index。只匹配 Codex 账号。",
+            "  cpa codex refresh <查询词> [--client|-c <客户端>]",
+            "    查询词：邮箱、别名、文件名、auth_index（不传 auth_index 给远程，只传查询词）。只匹配 Codex 账号。",
+            "    远程客户端需开启 CODEX_REFRESH_ENABLED=true。",
             "",
             "【登录】授权链接优先私聊。不要加 is_webui。",
             f"  可用渠道：{providers}",
@@ -495,18 +502,63 @@ async def quota_cooling() -> None:
     await UniMessage(format_quota_list([item for item in files if is_cooling(item)])).finish()
 
 
+def resolve_codex_refresh_target(
+    raw_query: str,
+    raw_client: str | None,
+    cfg: Config,
+    known_clients: set[str],
+) -> tuple[str, str, str]:
+    """解析 codex refresh 参数，返回 (target_client, query, error_message)。"""
+    account_query = raw_query.strip()
+    if not account_query:
+        return "", "", "查询词不能为空。"
+    client_param = (raw_client or "").strip()
+    if not client_param:
+        return cfg.client_name, account_query, ""
+    normalized_client = normalize_client_name(client_param)
+    if not valid_client_name(normalized_client):
+        return "", "", f"客户端名称非法：{client_param}"
+    if normalized_client not in known_clients:
+        return "", "", f"未知客户端：{client_param}"
+    return normalized_client, account_query, ""
+
+
 @cpa.assign("codex.refresh")
-async def codex_refresh(event: Event, query: Query[str] = Query("codex.refresh.query")) -> None:
+async def codex_refresh(
+    event: Event,
+    query: Query[str] = Query("codex.refresh.query"),
+    client: Query[str] = Query("codex.refresh.client"),
+) -> None:
     if not _can_refresh_codex(event):
-        await UniMessage("未配置 Codex_Refresh_Admin，或你不在名单中，无法刷新。").finish()
+        await UniMessage("未配置 CODEX_REFRESH_ADMIN，或你不在名单中，无法刷新。").finish()
         return
-    file = await _require_platform_account("codex", _text(query))
+    cfg = get_plugin_config(Config)
+    hub = get_hub()
+    known = hub.known_names(cfg)
+    target_client, account_query, err = resolve_codex_refresh_target(
+        _text(query),
+        _text(client) if client.available else None,
+        cfg,
+        known,
+    )
+    if err:
+        await UniMessage(err).finish()
+        return
+    if target_client == cfg.client_name:
+        file = await _require_platform_account("codex", account_query)
+        try:
+            message = await refresh_codex_quota(file)
+        except CPAError as exc:
+            await UniMessage(str(exc)).finish()
+            return
+        await UniMessage(message).finish()
+        return
     try:
-        message = await refresh_codex_quota(file)
-    except CPAError as exc:
+        res = await hub.refresh_codex(target_client, account_query)
+    except (CPAError, HubError) as exc:
         await UniMessage(str(exc)).finish()
         return
-    await UniMessage(message).finish()
+    await UniMessage(res.message).finish()
 
 
 @cpa.assign("quota.reset")

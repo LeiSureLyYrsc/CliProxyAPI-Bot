@@ -279,6 +279,37 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(_window_text(weekly, compact=True), "周额度 剩 80%")
         self.assertEqual(_window_text(product, compact=True), "GrokBuild 已使用 10%")
 
+    def test_xai_aggregate_uses_consumed_percentage_for_products(self) -> None:
+        accounts = [
+            AccountQuota(
+                platform="xai",
+                name="xai-1",
+                auth_index="1",
+                windows=[
+                    QuotaWindow(id="billing", label="周额度", used_percent=20.0, remaining_percent=80.0),
+                    QuotaWindow(id="grok-build", label="GrokBuild", used_percent=10.0, remaining_percent=90.0),
+                ],
+            ),
+            AccountQuota(
+                platform="xai",
+                name="xai-2",
+                auth_index="2",
+                windows=[
+                    QuotaWindow(id="billing", label="周额度", used_percent=30.0, remaining_percent=70.0),
+                    QuotaWindow(id="grok-build", label="GrokBuild", used_percent=20.0, remaining_percent=80.0),
+                ],
+            ),
+        ]
+        section = _build_board(accounts).platforms[0]
+        from cpaplugin.quota import calculate_aggregate_windows
+
+        by_id = {item["id"]: item for item in calculate_aggregate_windows(section, accounts)}
+        self.assertEqual(by_id["billing"]["sum_percent"], 150.0)
+        self.assertEqual(by_id["billing"]["mode"], "remaining")
+        self.assertEqual(by_id["grok-build"]["sum_percent"], 30.0)
+        self.assertEqual(by_id["grok-build"]["avg_percent"], 15.0)
+        self.assertEqual(by_id["grok-build"]["mode"], "used")
+
 
 class BoardFormatTests(unittest.TestCase):
     def test_platform_total_is_equivalent_not_percent_sum(self) -> None:
