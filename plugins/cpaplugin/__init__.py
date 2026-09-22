@@ -20,7 +20,7 @@ __plugin_meta__ = PluginMetadata(
     config=Config,
     supported_adapters=__supported_adapters__,
     extra={
-        "author": "CliProxyAPI-Bot",
+        "author": "QuotaNoa-Bot",
         "version": "0.1.0",
     },
 )

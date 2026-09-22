@@ -1,7 +1,7 @@
 [project]
-name = "CPA-Plugin"
+name = "QuotaNoa-Bot"
 version = "0.1.0"
-description = "CPA-Plugin"
+description = "QuotaNoa-Bot"
 readme = "README.md"
 requires-python = ">=3.10, <4.0"
 dependencies = [

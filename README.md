@@ -1,4 +1,4 @@
-# CliProxyAPI Bot
+# QuotaNoa Bot
 
 NoneBot2 + Alconna 插件，让管理员在聊天里操作 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) 管理接口：探活、凭证巡检、OAuth 登录、额度/冷却查看与 `reset-quota`。
 

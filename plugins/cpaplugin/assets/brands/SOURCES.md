@@ -1,6 +1,6 @@
 # Brand Assets Source & Trademark Notice
 
-Vendored icons are downloaded directly from the official verified sources listed below for UI display inside CliProxyAPI-Bot quota status renders.
+Vendored icons are downloaded directly from the official verified sources listed below for UI display inside QuotaNoa-Bot quota status renders.
 
 ## Sources & Retrieval Date
 - Date of retrieval: 2026-09-17

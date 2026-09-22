@@ -62,7 +62,7 @@ class ManagementClient:
                 "Authorization": f"Bearer {key}",
                 "X-Management-Key": key,
                 "Accept": "application/json",
-                "User-Agent": "CPA-Plugin/0.1.0",
+                "User-Agent": "QuotaNoa-Bot/0.1.0",
             },
         )
         self._auth_blocked_until = 0.0
