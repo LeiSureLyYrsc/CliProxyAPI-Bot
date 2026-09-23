@@ -28,6 +28,9 @@ htmlcov/
 # Runtime data (aliases, etc.)
 data/
 
+# Local tests (keep locally, untracked)
+tests/
+
 # Logs / OS / IDE
 *.log
 .DS_Store
