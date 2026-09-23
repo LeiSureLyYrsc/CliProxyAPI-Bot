@@ -20,6 +20,8 @@ from ..model import (
     PlatformQuota,
     QuotaBoard,
     QuotaWindow,
+    board_from_accounts,
+    build_board,
     calculate_aggregate_windows,
     calculate_grouped_earliest_resets,
     calculate_plan_distribution,
@@ -27,6 +29,8 @@ from ..model import (
     extract_earliest_reset_seconds,
     format_reset_zh,
     sort_windows,
+    stamp_client,
+    window_is_used,
 )
 from .format import display_name, is_cooling, is_unhealthy
 
@@ -34,6 +38,9 @@ from .format import display_name, is_cooling, is_unhealthy
 PLATFORM_ALIASES = CHANNEL_ALIASES
 PLATFORM_TITLES = _MODEL_PLATFORM_TITLES
 PLATFORM_ORDER = _MODEL_PLATFORM_ORDER
+
+#: 板构建逻辑已上移到根模型，供各渠道共用；保留旧名以兼容既有调用与测试。
+_build_board = build_board
 
 CLAUDE_WINDOWS = (
     ("five_hour", "5h"),
@@ -158,19 +165,6 @@ def clear_quota_cache() -> None:
     _cache_key = ""
     _cache_expires = 0.0
     _cache_board = None
-
-
-def stamp_client(board: QuotaBoard, client_name: str) -> QuotaBoard:
-    for section in board.platforms:
-        for account in section.accounts:
-            account.client_name = client_name
-    return board
-
-
-def board_from_accounts(accounts: list[AccountQuota], *, cached: bool = False) -> QuotaBoard:
-    board = _build_board(accounts)
-    board.cached = cached
-    return board
 
 
 def accounts_from_result(data: dict[str, Any] | Any) -> list[AccountQuota]:
@@ -1207,69 +1201,6 @@ async def _upstream_json(
     return body
 
 
-def _build_board(reports: list[AccountQuota]) -> QuotaBoard:
-    grouped: dict[str, list[AccountQuota]] = {}
-    for report in reports:
-        grouped.setdefault(report.platform, []).append(report)
-    platforms: list[PlatformQuota] = []
-    ok = failed = skipped = 0
-    for key in PLATFORM_ORDER:
-        accounts = grouped.pop(key, [])
-        if not accounts:
-            continue
-        remain_sum: dict[str, float] = {}
-        remain_count: dict[str, int] = {}
-        labels: dict[str, str] = {}
-        remaining_sum = 0.0
-        limit_sum = 0.0
-        for account in accounts:
-            if account.error:
-                failed += 1
-            elif account.windows:
-                ok += 1
-            else:
-                skipped += 1
-            for window in account.windows:
-                labels.setdefault(window.id, window.label)
-                if window.remaining_percent is not None:
-                    remain_sum[window.id] = remain_sum.get(window.id, 0.0) + window.remaining_percent
-                    remain_count[window.id] = remain_count.get(window.id, 0) + 1
-                if window.remaining is not None:
-                    remaining_sum += window.remaining
-                if window.limit is not None:
-                    limit_sum += window.limit
-        platforms.append(
-            PlatformQuota(
-                platform=key,
-                title=PLATFORM_TITLES.get(key, key),
-                accounts=accounts,
-                window_remain_sum=remain_sum,
-                window_remain_count=remain_count,
-                window_labels=labels,
-                remaining_sum=remaining_sum,
-                limit_sum=limit_sum,
-            )
-        )
-    for leftover, accounts in sorted(grouped.items()):
-        platforms.append(
-            PlatformQuota(
-                platform=leftover,
-                title=leftover,
-                accounts=accounts,
-                window_remain_sum={},
-                window_remain_count={},
-            )
-        )
-        skipped += len(accounts)
-    return QuotaBoard(
-        platforms=platforms,
-        queried=len(reports),
-        ok=ok,
-        failed=failed,
-        skipped=skipped,
-    )
-
-
 def _format_platform(section: PlatformQuota, account_limit: int) -> list[str]:
     account_n = len(section.accounts)
     lines = [f"【{section.title}】{account_n} 账号"]
@@ -1302,7 +1233,7 @@ def _format_platform(section: PlatformQuota, account_limit: int) -> list[str]:
 
 
 def _window_text(window: QuotaWindow, *, compact: bool = False) -> str:
-    if window.id.startswith("grok-") and window.used_percent is not None:
+    if window_is_used(window) and window.used_percent is not None:
         body = f"已使用 {window.used_percent:.0f}%"
     elif window.remaining_percent is not None:
         body = f"剩 {window.remaining_percent:.0f}%"

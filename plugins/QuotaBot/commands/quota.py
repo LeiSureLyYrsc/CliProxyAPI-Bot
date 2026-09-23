@@ -8,14 +8,14 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Sequence
 
 from arclet.alconna import Alconna, Args, CommandMeta, MultiVar, Option, Subcommand, store_true
 from nonebot.adapters import Bot, Event
 from nonebot_plugin_alconna import Arparma, Image, Query, UniMessage, on_alconna
 
 from .. import state
-from ..config import CpaConfig, ServerConfig
+from ..config import CpaConfig, ServerConfig, VolcengineAccount
 from ..cpa.client import CPAError, get_client
 from ..cpa.format import format_ambiguous, format_quota_list, is_cooling, match_auth
 from ..cpa.quota import (
@@ -33,6 +33,7 @@ from ..cpa.quota import (
 from ..hub import HubError, get_hub
 from ..query import QuotaSelection, parse_quota_command
 from ..render.html import RenderError, render_board_images
+from ..volcengine.provider import collect_board as collect_volcengine_board
 
 from .common import CPA_ADMIN, _require_one, _text
 
@@ -214,6 +215,10 @@ async def quota_view(event: Event) -> None:
     )
     if selection.error:
         await UniMessage(selection.error).finish()
+    # 火山方舟：本地渠道，凭据来自 volcengine.accounts，不向远程客户端扩散。
+    if selection.platform == "volcengine":
+        await _send_volcengine_results(server, snapshot.cpa, selection)
+        return
     names = _quota_targets(server, selection)
     if not names:
         await UniMessage("没有可查询的客户端。").finish()
@@ -229,6 +234,41 @@ async def quota_view(event: Event) -> None:
         except (CPAError, HubError) as exc:
             results.append((name, str(exc)))
     await _send_quota_results(server, snapshot.cpa, results, want_text=selection.text, multi=len(names) > 1)
+
+
+async def _send_volcengine_results(server: ServerConfig, cpa: CpaConfig, selection: QuotaSelection) -> None:
+    accounts = list(state.get_snapshot().volcengine.accounts)
+    if selection.account:
+        accounts = _filter_volcengine_accounts(accounts, selection.account)
+        if not accounts:
+            await UniMessage(f"没有找到火山账号：{selection.account}").finish()
+    if not accounts:
+        await UniMessage(
+            "未配置火山方舟账号。请在 data/quotabot_config.json 的 volcengine.accounts 里添加 "
+            "{name, access_key_id, secret_access_key, region}。"
+        ).finish()
+    await UniMessage("正在查询火山方舟 Coding Plan 额度…").send()
+    try:
+        board = await collect_volcengine_board(accounts)
+    except Exception as exc:  # noqa: BLE001 - 兜底，避免单渠道异常打断消息处理
+        await UniMessage(f"火山额度查询失败：{exc}").finish()
+        return
+    await _send_quota_results(server, cpa, [(server.client_name, board)], want_text=selection.text, multi=False)
+
+
+def _filter_volcengine_accounts(accounts: Sequence[VolcengineAccount], query: str) -> list[VolcengineAccount]:
+    needle = query.strip().lower()
+    if not needle:
+        return list(accounts)
+    from ..aliases import resolve_alias_for_keys
+
+    matched: list[VolcengineAccount] = []
+    for account in accounts:
+        alias = resolve_alias_for_keys("volcengine", [account.name]) or account.name
+        fields = [account.name.lower(), alias.lower()]
+        if any(needle in field or field.startswith(needle) for field in fields):
+            matched.append(account)
+    return matched
 
 
 def _quota_targets(server: ServerConfig, selection: QuotaSelection) -> list[str]:

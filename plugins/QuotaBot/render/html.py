@@ -20,6 +20,7 @@ from ..model import (
     extract_earliest_reset_seconds,
     format_reset_zh,
     sort_windows,
+    window_is_used,
 )
 
 from .themes import get_theme_registry
@@ -44,6 +45,7 @@ _BADGES = {
     "kimi": "KM",
     "xai": "xAI",
     "gemini-cli": "GM",
+    "volcengine": "VOLC",
     "other": "?",
 }
 
@@ -54,6 +56,7 @@ _GROUP_TITLES = {
     "claude": "Claude",
     "xai": "xAI",
     "kimi": "Usage",
+    "volc": "额度",
     "other": "Quota",
 }
 
@@ -348,7 +351,7 @@ def _group_html(title: str, windows: list[QuotaWindow]) -> str:
 def _bar_html(window: QuotaWindow) -> str:
     remain = window.remaining_percent
     used = window.used_percent
-    is_grok_product = window.id.startswith("grok-")
+    is_grok_product = window_is_used(window)
     if remain is None and used is not None:
         remain = max(0.0, 100.0 - used)
     elif (
@@ -419,6 +422,8 @@ def _grouped_windows(
 
 
 def _group_key(window_id: str) -> str:
+    if window_id.startswith("volc-"):
+        return "volc"
     if window_id.startswith("gemini-"):
         return "gemini"
     if window_id.startswith("claude-gpt-"):

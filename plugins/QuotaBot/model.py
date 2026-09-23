@@ -24,6 +24,18 @@ class QuotaWindow:
     limit: float | None = None
     reset_label: str = "-"
     reset_at: float | None = None
+    #: 该窗口进度条的"主方向"："" = 自动推断（旧数据按 id 前缀，如 grok- 视为已用）；
+    #: "remaining" = 表示剩余（多数渠道）；"used" = 表示已用（如火山 Percent）。
+    direction: str = ""
+
+
+def window_is_used(window: QuotaWindow) -> bool:
+    """窗口进度条是否按"已用"方向展示。"""
+    if window.direction == "used":
+        return True
+    if window.direction == "remaining":
+        return False
+    return window.id.startswith("grok-")
 
 
 @dataclass
@@ -194,6 +206,8 @@ def _classify_model_category(window_id: str, window_label: str = "") -> str:
     wid = (window_id or "").strip().lower()
     lbl = (window_label or "").strip().lower()
 
+    if wid.startswith("volc-") or "火山" in lbl or "volcengine" in lbl:
+        return "火山"
     if wid.startswith("gemini-") or lbl.startswith("gemini"):
         return "Gemini"
     if (
@@ -341,11 +355,11 @@ def calculate_aggregate_windows(
     for account in accts:
         for w in account.windows:
             win_labels.setdefault(w.id, w.label)
-            is_grok_product = w.id.startswith("grok-")
-            pct = w.used_percent if is_grok_product else w.remaining_percent
-            win_modes[w.id] = "used" if is_grok_product else "remaining"
+            is_used = window_is_used(w)
+            pct = w.used_percent if is_used else w.remaining_percent
+            win_modes[w.id] = "used" if is_used else "remaining"
             if pct is None and w.used_percent is not None:
-                pct = w.used_percent if is_grok_product else max(0.0, 100.0 - w.used_percent)
+                pct = w.used_percent if is_used else max(0.0, 100.0 - w.used_percent)
             elif (
                 pct is None
                 and w.remaining is not None
@@ -418,3 +432,85 @@ def _window_span(window: QuotaWindow) -> int:
     if any(token in blob for token in ("month", "monthly", "月")):
         return 2
     return 3
+
+
+# --------------------------------------------------------------------------- #
+# 板（board）构建 —— 与渠道无关，供 cpa/ 与 volcengine/ 共用
+# --------------------------------------------------------------------------- #
+
+
+def build_board(reports: list[AccountQuota]) -> QuotaBoard:
+    """把账号额度列表按平台聚合为展示板。"""
+    grouped: dict[str, list[AccountQuota]] = {}
+    for report in reports:
+        grouped.setdefault(report.platform, []).append(report)
+    platforms: list[PlatformQuota] = []
+    ok = failed = skipped = 0
+    for key in PLATFORM_ORDER:
+        accounts = grouped.pop(key, [])
+        if not accounts:
+            continue
+        remain_sum: dict[str, float] = {}
+        remain_count: dict[str, int] = {}
+        labels: dict[str, str] = {}
+        remaining_sum = 0.0
+        limit_sum = 0.0
+        for account in accounts:
+            if account.error:
+                failed += 1
+            elif account.windows:
+                ok += 1
+            else:
+                skipped += 1
+            for window in account.windows:
+                labels.setdefault(window.id, window.label)
+                if window.remaining_percent is not None:
+                    remain_sum[window.id] = remain_sum.get(window.id, 0.0) + window.remaining_percent
+                    remain_count[window.id] = remain_count.get(window.id, 0) + 1
+                if window.remaining is not None:
+                    remaining_sum += window.remaining
+                if window.limit is not None:
+                    limit_sum += window.limit
+        platforms.append(
+            PlatformQuota(
+                platform=key,
+                title=PLATFORM_TITLES.get(key, key),
+                accounts=accounts,
+                window_remain_sum=remain_sum,
+                window_remain_count=remain_count,
+                window_labels=labels,
+                remaining_sum=remaining_sum,
+                limit_sum=limit_sum,
+            )
+        )
+    for leftover, accounts in sorted(grouped.items()):
+        platforms.append(
+            PlatformQuota(
+                platform=leftover,
+                title=PLATFORM_TITLES.get(leftover, leftover),
+                accounts=accounts,
+                window_remain_sum={},
+                window_remain_count={},
+            )
+        )
+        skipped += len(accounts)
+    return QuotaBoard(
+        platforms=platforms,
+        queried=len(reports),
+        ok=ok,
+        failed=failed,
+        skipped=skipped,
+    )
+
+
+def stamp_client(board: QuotaBoard, client_name: str) -> QuotaBoard:
+    for section in board.platforms:
+        for account in section.accounts:
+            account.client_name = client_name
+    return board
+
+
+def board_from_accounts(accounts: list[AccountQuota], *, cached: bool = False) -> QuotaBoard:
+    board = build_board(accounts)
+    board.cached = cached
+    return board

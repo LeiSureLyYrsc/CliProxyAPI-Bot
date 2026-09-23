@@ -17,7 +17,7 @@ uv run playwright install chromium
 uv run nb run
 ```
 
-未执行 `uv run playwright install chromium` 时，`cpa quota` 会回退纯文字，也可设 `CPA_QUOTA_IMAGE=false` 或加 `--text`。
+未执行 `uv run playwright install chromium` 时，`/quota` 会回退纯文字，也可设 `cpa.quota_image=false` 或加 `--text`。
 
 ## 配置
 
@@ -108,7 +108,33 @@ Bot 与 CPA 不在同一台机器时，CPA 需要 `remote-management.allow-remot
 
 ## 命令
 
-仅超级用户 / `CPA_ADMINS` 可用。`COMMAND_START=["/"]` 时发 `/cpa` 或 `cpa` 会输出完整命令帮助。
+仅超级用户 / `cpa.admins` 可用。额度查询用 `/quota`（必须带指令头 `/`）；CPA 管理用 `/cpa`（前缀可有可无）。
+
+### 额度查询 `/quota`
+
+| 命令 | 作用 |
+| --- | --- |
+| `/quota` | 本机客户端全平台额度汇总；无参数时显示帮助 |
+| `/quota <平台>` | 只看一个平台：`claude` / `codex`(gpt, openai) / `antigravity`(反重力) / `kimi` / `xai` |
+| `/quota 火山` | 查询火山方舟 Coding Plan 额度（同义：`volc` / `volcengine` / `ark` / `火山方舟`） |
+| `/quota <客户端>` | 查询指定在线客户端。例：`/quota Home` |
+| `/quota <平台> <客户端>` | 例：`/quota antigravity Home` 或 `/quota Home antigravity` |
+| `/quota <查询词>` | 单个账号的额度卡 |
+| `/quota --fresh` | 忽略缓存，强制重查 |
+| `/quota --text` | 只发文字总览（排障 / 无浏览器时） |
+| `/quota --all` | 分别查询本机与所有在线客户端 |
+| `/quota --client <客户端>` | 显式指定客户端，避免与平台名冲突 |
+| `/quota cooling` | 只看冷却（本地 CPA 状态，不打上游） |
+| `/quota reset <查询词>` | `POST /reset-quota`（使用完整 `auth_index`） |
+| `/quota alias list [--disabled]` | 列出账号显示别名（分渠道） |
+| `/quota alias set <渠道> <查询词> <别名>` | 为指定渠道账号设置别名 |
+| `/quota alias del <查询词>` | 删除别名（跨渠道全部删除） |
+| `/quota theme [set <主题>]` | 查看 / 设置额度图主题（`default` / `mac` / `md3` / `winxp` / `win7`） |
+| `/quota card [row <1..6>]` | 查看 / 设置每行卡片数量 |
+| `/quota config show` | 查看当前生效配置（密钥脱敏）与最近解析错误 |
+| `/quota config reload` | 强制从磁盘重载配置 |
+
+### CPA 管理 `/cpa`
 
 | 命令 | 作用 |
 | --- | --- |
@@ -118,32 +144,18 @@ Bot 与 CPA 不在同一台机器时，CPA 需要 `remote-management.allow-remot
 | `cpa auth on\|off <查询词>` | 启用 / 禁用（`enable` / `disable` 同义） |
 | `cpa auth models <查询词>` | 该凭证支持的模型 |
 | `cpa auth delete <查询词> --yes` | 删除磁盘凭证；无 `--yes` 只预告 |
-| `cpa alias list [--disabled]` | 列出账号显示别名。默认隐藏已禁用账号 |
-| `cpa alias set <渠道> <邮箱> <别名>` | 为指定渠道账号设置别名；同邮箱跨渠道必须带渠道 |
-| `cpa alias del <查询词>` | 删除别名 |
-| `cpa theme` | 查看当前主题与自动发现的可用主题列表 |
-| `cpa theme set <主题>` | 设置额度图主题；内置 `default` / `mac` / `md3` / `winxp` / `win7` |
-| `cpa card` | 查看当前每行卡片数量 |
-| `cpa card row <1..6>` | 设置每行卡片数量 |
-| `cpa quota` | 按平台分组查上游额度，每个平台发一张合并卡片图 |
-| `cpa quota <平台>` | 只出该平台的合并图：`claude` / `codex`(gpt, openai) / `antigravity`(反重力) / `kimi` / `xai` |
-| `cpa quota <查询词>` | 单个账号的额度卡片 |
-| `cpa quota --fresh` | 忽略缓存，强制重查 |
-| `cpa quota --text` | 只发文字总览（排障 / 无浏览器时） |
-| `cpa quota cooling` | 只看冷却（本地 CPA 状态，不打上游） |
-| `cpa quota reset <查询词>` | `POST /reset-quota`（使用完整 `auth_index`） |
-| `cpa codex refresh <查询词> [--client|-c <客户端>]` | 消耗 1 次 Codex 官方重置次数并刷新额度。未指定客户端时为本机，指定远程客户端需目标 Client 开启 `CODEX_REFRESH_ENABLED=true`。查询词可用邮箱/别名，只匹配 Codex。协议不传输 auth_index。仅 `CODEX_REFRESH_ADMIN` |
+| `cpa codex refresh <查询词> [--client|-c <客户端>]` | 消耗 1 次 Codex 官方重置次数并刷新额度。仅 `cpa.codex_refresh_admin` |
 | `cpa login <渠道>` | 启动 OAuth / 设备码。授权完成后把浏览器回调链接发回聊天 |
 | `cpa login callback <回调链接>` | 手动提交 localhost 回调 URL |
 | `cpa login cancel` | 取消当前登录 |
 
-查询词可以是 email、文件名、label、别名或 `auth_index`（含前缀）。列表和额度图优先显示别名；未设别名时用 `渠道-短索引`，避免把邮箱发到聊天。同邮箱出现在多个渠道时用 `cpa alias set antigravity user@example.com AG-1`。详情 `cpa auth show` 仍会列出原始字段，便于对照。
+查询词可以是 email、文件名、label、别名或 `auth_index`（含前缀）。列表和额度图优先显示别名；未设别名时用 `渠道-短索引`，避免把邮箱发到聊天。同邮箱出现在多个渠道时用 `/quota alias set antigravity user@example.com AG-1`。详情 `cpa auth show` 仍会列出原始字段，便于对照。
 
 内置登录渠道：`claude` / `anthropic`、`codex`、`antigravity`、`kimi`、`xai`。若 CPA 插件声明了 `supports_oauth`，还会动态发现 `/{provider}-auth-url`。不要写死已从 core 移除的 `gemini-cli` / `qwen` / `iflow`。
 
 ## 额度说明
 
-CLIProxyAPI **没有**账号池额度聚合接口。`GET /auth-files` 只有健康 / 冷却状态。`cpa quota` 和管理台 Quota 页同一思路：按 `provider` 分组后，用内部白名单 `POST /v0/management/api-call` 打各平台用量接口（`$TOKEN$` 由 CPA 替换）。聊天里**不会**开放通用代发。
+CLIProxyAPI **没有**账号池额度聚合接口。`GET /auth-files` 只有健康 / 冷却状态。`/quota` 的 CPA 部分和管理台 Quota 页同一思路：按 `provider` 分组后，用内部白名单 `POST /v0/management/api-call` 打各平台用量接口（`$TOKEN$` 由 CPA 替换）。聊天里**不会**开放通用代发。火山方舟部分则直接用控制面 OpenAPI（SigV4 签名）查询 `GetCodingPlanUsage`。
 
 默认跳过 `disabled` 凭证，与管理台「8 个文件 / 6 个参与额度」一致。
 
@@ -193,13 +205,15 @@ themes/<主题名>/
 
 新增主题时只需复制一个现有目录、修改目录名及上述四个文件，然后重启 Bot。主题目录名必须与 `theme.json` 中的 `name` 相同，并使用小写字母、数字、下划线或连字符。无需修改 Python 注册表或命令代码。运行时 CSS 和 wrapper 禁止脚本、事件处理器、`@import` 和远程 HTTP(S) 资源。
 
-默认主题的 canonical 名称为 `default`。旧配置中的 `"theme": "shadcn"` 会自动兼容并解析为 `default`。主题和卡片布局保存在 `CPA_ALIAS_FILE` 同目录下的 `cpa_render_settings.json`，不使用主题相关环境变量。
+默认主题的 canonical 名称为 `default`。旧配置中的 `"theme": "shadcn"` 会自动兼容并解析为 `default`。主题和卡片布局保存在 `data/quotabot_config.json` 的 `render` 段（`/quota theme`、`/quota card row` 修改），不使用主题相关环境变量。
 
-未安装 Chromium 时会自动回退文字，并提示执行 `playwright install chromium`（推荐：`uv run playwright install chromium`）。`CPA_QUOTA_IMAGE=false` 或 `cpa quota --text` 可强制只要文字。
+未安装 Chromium 时会自动回退文字，并提示执行 `playwright install chromium`（推荐：`uv run playwright install chromium`）。`cpa.quota_image=false` 或 `/quota --text` 可强制只要文字。
 
-支持的上游：Claude OAuth usage、Codex WHAM usage、Antigravity `retrieveUserQuotaSummary` + `loadCodeAssist`（套餐）、Kimi usages、xAI billing credits。Antigravity 的 `account_type=oauth` 只是登录方式，套餐来自 `paidTier`（Pro / Plus / Ultra）。未知 / API-key 渠道只显示本地健康状态。
+支持的上游：Claude OAuth usage、Codex WHAM usage、Antigravity `retrieveUserQuotaSummary` + `loadCodeAssist`（套餐）、Kimi usages、xAI billing credits、**火山方舟 Coding Plan**（控制面 `GetCodingPlanUsage`）。Antigravity 的 `account_type=oauth` 只是登录方式，套餐来自 `paidTier`（Pro / Plus / Ultra）。未知 / API-key 渠道只显示本地健康状态。
 
-不要用 `GET /usage-queue` 当「查用量」——它会把记录从队列里弹出，会和 WebUI / Redis `LPOP` 抢数据。全量刷新会打上游，群里连刷请用缓存或 `cpa quota antigravity` 只查一个平台。
+火山方舟凭据请用**控制面 OpenAPI** 的 AccessKey ID + SecretAccessKey（`volcengine.accounts[]`，需子账户具备 `ArkReadOnlyAccess` 权限），**不是**推理 Key（`ark-...` 查不了额度）。Bot 直接对 `open.volcengineapi.com` 做 SigV4 签名请求。
+
+不要用 `GET /usage-queue` 当「查用量」——它会把记录从队列里弹出，会和 WebUI / Redis `LPOP` 抢数据。全量刷新会打上游，群里连刷请用缓存或 `/quota antigravity` 只查一个平台。
 
 ## OAuth 注意
 
