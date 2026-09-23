@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from arclet.alconna import Alconna, Args, CommandMeta, Option, Subcommand, store_true
+from arclet.alconna import Alconna, Args, CommandMeta, MultiVar, Option, Subcommand, store_true
 from nonebot.adapters import Bot, Event
 from nonebot.exception import IgnoredException
 from nonebot.message import event_preprocessor
@@ -47,6 +47,7 @@ from .common import (
     _without,
     instance_names,
 )
+from .quota import quota_entry
 
 cpa = on_alconna(
     Alconna(
@@ -77,6 +78,11 @@ cpa = on_alconna(
             help_text="CPA 实例管理",
         ),
         Subcommand("status", Args["instance", str], help_text="探活与凭证概览"),
+        Subcommand(
+            "quota",
+            Args["a?", str]["b?", str]["tail", MultiVar(str, "*")],
+            help_text="查询额度（同 /quota）：/cpa quota [平台] [实例] [--fresh|--text]",
+        ),
         Subcommand(
             "auth",
             Subcommand(
@@ -204,7 +210,11 @@ def _cpa_help_text(providers: str) -> str:
             "  cpa login callback <回调链接>",
             "  cpa login cancel",
             "",
-            "【额度】请用 /quota 命令。",
+            "【额度】与 /quota 同义；默认查询全部实例。",
+            "  cpa quota [平台] [实例] [--instance <实例>] [--fresh] [--text]",
+            "    例：cpa quota xai JP-AI   只查 JP-AI 实例的 xAI 额度",
+            "        cpa quota xai         查全部实例的 xAI 额度",
+            "        cpa quota             查全部实例全平台",
         ]
     )
 
@@ -332,6 +342,12 @@ async def instance_remove(
 # --------------------------------------------------------------------------- #
 # 探活 / 凭证 / 登录 / codex
 # --------------------------------------------------------------------------- #
+
+
+@cpa.assign("quota")
+async def cpa_quota(event: Event) -> None:
+    """`/cpa quota` 与 `/quota` 同义：默认查询全部实例。"""
+    await quota_entry(event)
 
 
 @cpa.assign("status")

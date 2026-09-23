@@ -16,6 +16,7 @@ from .config import normalize_name, valid_name
 from .model import is_channel_name, normalize_channel
 
 INSTANCE_FLAGS = {"--instance", "-i"}
+ALL_FLAGS = {"all", "--all", "-all", "-a"}
 FRESH_FLAGS = {"--fresh", "--refresh", "-f"}
 TEXT_FLAGS = {"--text", "-t"}
 
@@ -70,6 +71,10 @@ def parse_quota_parts(
         lowered = token.lower()
         if lowered in {"cooling", "reset"} and index == 0:
             return QuotaSelection(error="")
+        if lowered in ALL_FLAGS:
+            # 显式 all = 查询全部实例（与“不指定实例”等价，默认即全部）。
+            index += 1
+            continue
         if lowered in INSTANCE_FLAGS:
             if index + 1 >= len(parts):
                 return QuotaSelection(error="--instance 需要实例名称。")

@@ -157,6 +157,7 @@ Bot 与 CPA 不在同一台机器时，CPA 需要 `remote-management.allow-remot
 | `cpa login <实例> <渠道>` | 启动 OAuth / 设备码。授权完成后把浏览器回调链接发回聊天（自动归属该实例） |
 | `cpa login callback <回调链接>` | 手动提交 localhost 回调 URL |
 | `cpa login cancel` | 取消当前登录 |
+| `cpa quota [平台] [实例] [--instance <实例>] [--fresh] [--text]` | 与 `/quota` 同义：默认查询**全部实例**。例：`cpa quota xai JP-AI` 只查 JP-AI 的 xAI 额度 |
 
 查询词可以是 email、文件名、label、别名或 `auth_index`（含前缀）。列表和额度图优先显示别名；未设别名时用 `渠道-短索引`，避免把邮箱发到聊天。同邮箱出现在多个渠道时用 `/quota alias set antigravity user@example.com AG-1`。详情 `cpa auth show` 仍会列出原始字段，便于对照。
 

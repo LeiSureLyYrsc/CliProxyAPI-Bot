@@ -30,7 +30,7 @@ from ..cpa.quota import (
     peek_quota_cache,
     platform_of,
 )
-from ..query import QuotaSelection, parse_quota_command
+from ..query import QuotaSelection, parse_quota_command, strip_quota_head, tokenize
 from ..render.html import RenderError, render_board_images
 from ..volcengine.provider import collect_board as collect_volcengine_board
 
@@ -123,6 +123,16 @@ def _should_show_help(main_args: dict[str, Any]) -> bool:
     b = main_args.get("b")
     tail = main_args.get("tail") or ()
     return not (a or b or tail)
+
+
+async def quota_entry(event: Event) -> None:
+    """共享入口：裸命令显示帮助，否则查询。
+
+    供 /quota 与 /cpa quota 复用；两处前缀都由 ``strip_quota_head`` 归一。
+    """
+    if not strip_quota_head(tokenize(event.get_plaintext())):
+        await UniMessage(_quota_help_text()).finish()
+    await quota_view(event)
 
 
 # --------------------------------------------------------------------------- #
