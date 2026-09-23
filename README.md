@@ -9,7 +9,7 @@ NoneBot2 + Alconna 插件，让管理员在聊天里操作 [CLIProxyAPI](https:/
 ```bash
 uv sync
 cp .env.example .env.prod   # Windows: Copy-Item .env.example .env.prod
-# 编辑 .env.prod：SUPERUSERS、适配器、CPA_BASE_URL、CPA_MANAGEMENT_KEY
+# 编辑 .env.prod：SUPERUSERS、适配器；插件业务配置在 data/quotabot_config.json
 
 # 要用额度卡片图时必须先装浏览器，否则自动回退文字
 uv run playwright install chromium
@@ -55,44 +55,54 @@ telegram_bots=[{"token": "123456:ABC-DEF"}]
 
 走系统 / 本地代理访问 Telegram API 时取消注释 `TELEGRAM_PROXY`。
 
-### CPA 插件
+### QuotaBot 插件
+
+业务配置（CPA 连接、火山凭据、渲染主题、Server 模式、别名文件路径）全部放在 `data/quotabot_config.json`，首次启动自动生成，支持热重载。`.env` 里只有这一项可选覆盖：
 
 ```env
-CPA_BASE_URL=http://127.0.0.1:8317
-CPA_MANAGEMENT_KEY=plaintext-management-password
-# 可选：额外管理员，值为各平台的 user id
-CPA_ADMINS=["87654321"]
-# 可选：允许执行 cpa codex refresh。SUPERUSERS 不能代替该权限
-# CODEX_REFRESH_ADMIN=["87654321"]
-# 可选
-# CPA_TIMEOUT=15
-# CPA_OAUTH_POLL_INTERVAL=3
-# CPA_OAUTH_TIMEOUT=1800
-# CPA_QUOTA_TIMEOUT=25
-# CPA_QUOTA_CONCURRENCY=4
-# CPA_QUOTA_CACHE_TTL=60
-# CPA_QUOTA_IMAGE=true
-# CPA_QUOTA_IMAGE_WIDTH=520
-# CPA_ALIAS_FILE=data/cpa_aliases.json
-# CPA_ALIASES={"user@example.com":"AG-1"}
+# QUOTABOT_CONFIG_FILE=data/quotabot_config.json
 ```
 
-| 配置项 | 说明 |
+`quotabot_config.json` 结构：
+
+```jsonc
+{
+  "cpa": {
+    "base_url": "http://127.0.0.1:8317",
+    "management_key": "",            // 明文管理密钥
+    "admins": [],                    // 额外管理员 user id
+    "codex_refresh_admin": [],
+    "timeout": 15.0,
+    "oauth_poll_interval": 3.0,
+    "oauth_timeout": 1800.0,
+    "quota_timeout": 25.0,
+    "quota_concurrency": 4,
+    "quota_cache_ttl": 60.0,
+    "quota_image": true
+  },
+  "volcengine": {
+    "accounts": [
+      { "name": "火山主号", "access_key_id": "AKLT…", "secret_access_key": "…", "region": "cn-beijing" }
+    ]
+  },
+  "render": { "theme": "default", "cards_per_row": 4 },
+  "server": {
+    "enabled": false, "client_name": "Server", "host": "127.0.0.1", "port": 8320,
+    "client_keys": {}, "request_timeout": 40.0, "ws_max_size": 1048576, "max_accounts": 200
+  },
+  "aliases_file": "data/quota_aliases.json"
+}
+```
+
+| 段 | 说明 |
 | --- | --- |
-| `CPA_BASE_URL` | CPA 地址。可写 `http://host:8317` 或带 `/v0/management` 的完整前缀 |
-| `CPA_MANAGEMENT_KEY` | 管理密钥**明文**，对应 `Authorization: Bearer` / `X-Management-Key` |
-| `CPA_ADMINS` | 除 `SUPERUSERS` 外允许使用 `cpa` 的用户 ID |
-| `CODEX_REFRESH_ADMIN` | 允许执行 `cpa codex refresh` 的用户 ID。空名单则任何人（含 SUPERUSERS）都不能刷新 |
-| `CPA_TIMEOUT` | HTTP 超时（秒） |
-| `CPA_OAUTH_POLL_INTERVAL` | 登录状态轮询间隔（秒） |
-| `CPA_OAUTH_TIMEOUT` | 登录等待上限（秒），默认 1800，与 CPA session TTL 接近 |
-| `CPA_QUOTA_TIMEOUT` | 单次上游额度查询超时（秒） |
-| `CPA_QUOTA_CONCURRENCY` | 同时查询的账号数，默认 4 |
-| `CPA_QUOTA_CACHE_TTL` | 额度结果缓存秒数，默认 60；`cpa quota --fresh` 可绕过 |
-| `CPA_QUOTA_IMAGE` | 是否把额度渲染成卡片图，默认 true |
-| `CPA_QUOTA_IMAGE_WIDTH` | 出图宽度（px），默认 520 |
-| `CPA_ALIAS_FILE` | 账号别名 JSON，默认 `data/cpa_aliases.json`（不要提交） |
-| `CPA_ALIASES` | 可选的初始别名表，`{"邮箱或文件名":"显示名"}`；运行时 `cpa alias set` 会写进文件并覆盖 |
+| `cpa` | CPA 连接与额度查询设置。`base_url` 可写 `http://host:8317` 或带 `/v0/management` 的完整前缀；`management_key` 为明文密钥 |
+| `volcengine.accounts` | 火山方舟 Coding Plan 查询凭据（控制面 AccessKey，需 `ArkReadOnlyAccess`） |
+| `render` | 额度图主题与每行卡片数（1..6），`/quota theme` `/quota card row` 可改 |
+| `server` | Server 模式（远程客户端额度聚合）；改动需重启 |
+| `aliases_file` | 分渠道别名文件，默认 `data/quota_aliases.json` |
+
+修改配置后**自动热重载**（也可 `/quota config reload` 强制）；`/quota config show` 查看当前生效值。`server.*` 与 `admins` 变更需重启。旧的 `CPA_*` 环境变量与 `data/cpa_aliases.json` / `data/cpa_render_settings.json` 不再生效（启动时会告警，不做自动迁移）。
 
 Bot 与 CPA 不在同一台机器时，CPA 需要 `remote-management.allow-remote: true`，或设置环境变量 `MANAGEMENT_PASSWORD`（会强制允许远程）。未配置任何管理密钥时，`/v0/management` 会 404。
 
@@ -154,7 +164,7 @@ CLIProxyAPI **没有**账号池额度聚合接口。`GET /auth-files` 只有健�
 所有额度图主题均存放在独立资源目录中，渲染器会自动扫描：
 
 ```text
-plugins/cpaplugin/assets/
+plugins/QuotaBot/render/assets/
 ├─ quota.html
 ├─ base.css
 ├─ brands/

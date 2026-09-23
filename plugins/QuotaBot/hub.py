@@ -12,7 +12,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, status
 from fastapi.websockets import WebSocketState
 from pydantic import ValidationError
 
-from .config import Config
+from .config import ServerConfig
 from .protocol import (
     PROTOCOL_VERSION,
     CodexRefreshPayload,
@@ -29,7 +29,7 @@ try:
 except Exception:  # pragma: no cover
     import logging
 
-    logger = logging.getLogger("cpaplugin.hub")
+    logger = logging.getLogger("QuotaBot.hub")
 
 
 class HubError(Exception):
@@ -57,22 +57,22 @@ class Hub:
         self._lock = asyncio.Lock()
         self._server: Any = None
         self._task: asyncio.Task[None] | None = None
-        self._cfg: Config | None = None
+        self._cfg: ServerConfig | None = None
 
-    def configure(self, cfg: Config) -> None:
-        self._cfg = cfg
+    def configure(self, server: ServerConfig) -> None:
+        self._cfg = server
 
     def online_names(self) -> list[str]:
         return sorted(self._sessions)
 
-    def known_names(self, cfg: Config) -> set[str]:
-        names = {normalize_client_name(cfg.client_name)}
-        names.update(normalize_client_name(name) for name in cfg.cpa_server_client_keys)
+    def known_names(self, server: ServerConfig) -> set[str]:
+        names = {normalize_client_name(server.client_name)}
+        names.update(normalize_client_name(name) for name in server.client_keys)
         names.update(self._sessions)
         return names
 
-    def create_app(self, cfg: Config) -> FastAPI:
-        app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, title="CPA Client Hub")
+    def create_app(self, server: ServerConfig) -> FastAPI:
+        app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, title="QuotaBot Client Hub")
 
         @app.get("/health")
         async def health() -> dict[str, bool]:
@@ -80,25 +80,25 @@ class Hub:
 
         @app.websocket("/v1/client/ws")
         async def client_ws(websocket: WebSocket) -> None:
-            await self.handle_socket(websocket, cfg)
+            await self.handle_socket(websocket, server)
 
         return app
 
-    async def start(self, cfg: Config) -> None:
-        if not cfg.server_mode:
+    async def start(self, server: ServerConfig) -> None:
+        if not server.enabled:
             return
         if self._task and not self._task.done():
             return
         import uvicorn
 
-        self._cfg = cfg
-        app = self.create_app(cfg)
+        self._cfg = server
+        app = self.create_app(server)
         config = uvicorn.Config(
             app,
-            host=cfg.cpa_server_host,
-            port=cfg.cpa_server_port,
+            host=server.host,
+            port=server.port,
             log_level="info",
-            ws_max_size=max(1024, cfg.cpa_server_ws_max_size),
+            ws_max_size=max(1024, server.ws_max_size),
             ws_max_queue=8,
             ws_ping_interval=20,
             ws_ping_timeout=20,
@@ -110,8 +110,8 @@ class Hub:
             lifespan="off",
         )
         self._server = uvicorn.Server(config)
-        self._task = asyncio.create_task(self._server.serve(), name="cpa-client-hub")
-        logger.info(f"CPA Server_Mode 监听 {cfg.cpa_server_host}:{cfg.cpa_server_port}")
+        self._task = asyncio.create_task(self._server.serve(), name="quotabot-client-hub")
+        logger.info(f"QuotaBot Server_Mode 监听 {server.host}:{server.port}")
 
     async def stop(self) -> None:
         async with self._lock:
@@ -130,8 +130,8 @@ class Hub:
             self._task = None
         self._server = None
 
-    async def handle_socket(self, websocket: WebSocket, cfg: Config) -> None:
-        name, error, code = _handshake(websocket, cfg)
+    async def handle_socket(self, websocket: WebSocket, server: ServerConfig) -> None:
+        name, error, code = _handshake(websocket, server)
         if error or not name:
             await websocket.close(code=code or status.WS_1008_POLICY_VIOLATION)
             logger.warning(f"拒绝客户端连接：{error}")
@@ -152,7 +152,7 @@ class Hub:
             )
             while True:
                 raw = await websocket.receive_json()
-                await self._on_message(session, raw, cfg)
+                await self._on_message(session, raw, server)
         except WebSocketDisconnect:
             pass
         except Exception as exc:
@@ -160,7 +160,7 @@ class Hub:
         finally:
             await self._drop(session, "客户端已断开")
 
-    async def _on_message(self, session: ClientSession, raw: Any, cfg: Config) -> None:
+    async def _on_message(self, session: ClientSession, raw: Any, server: ServerConfig) -> None:
         try:
             envelope = Envelope.model_validate(raw)
         except ValidationError:
@@ -197,8 +197,8 @@ class Hub:
         for account in result.accounts:
             account.client_name = session.name
             account.auth_index = ""
-        if len(result.accounts) > cfg.cpa_server_max_accounts:
-            result.accounts = result.accounts[: cfg.cpa_server_max_accounts]
+        if len(result.accounts) > server.max_accounts:
+            result.accounts = result.accounts[: server.max_accounts]
         future.set_result(result.model_dump())
 
     async def _drop(self, session: ClientSession, reason: str) -> None:
@@ -218,7 +218,7 @@ class Hub:
         fresh: bool = False,
         timeout: float | None = None,
     ) -> QuotaQueryResult:
-        cfg = self._cfg
+        server = self._cfg
         payload = QuotaQueryPayload(platform=platform, account=account, fresh=fresh)
         req_id = str(uuid.uuid4())
         future: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
@@ -237,7 +237,7 @@ class Hub:
         try:
             async with session.lock:
                 await session.websocket.send_json(message.model_dump())
-                wait = timeout if timeout is not None else (cfg.cpa_server_request_timeout if cfg else 40.0)
+                wait = timeout if timeout is not None else (server.request_timeout if server else 40.0)
                 data = await asyncio.wait_for(future, timeout=max(1.0, wait))
             return QuotaQueryResult.model_validate(data)
         except asyncio.TimeoutError as exc:
@@ -256,7 +256,7 @@ class Hub:
         *,
         timeout: float | None = None,
     ) -> CodexRefreshResult:
-        cfg = self._cfg
+        server = self._cfg
         payload = CodexRefreshPayload(account=account)
         req_id = str(uuid.uuid4())
         future: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
@@ -275,7 +275,7 @@ class Hub:
         try:
             async with session.lock:
                 await session.websocket.send_json(message.model_dump())
-                wait = timeout if timeout is not None else (cfg.cpa_server_request_timeout if cfg else 40.0)
+                wait = timeout if timeout is not None else (server.request_timeout if server else 40.0)
                 data = await asyncio.wait_for(future, timeout=max(1.0, wait))
             return CodexRefreshResult.model_validate(data)
         except asyncio.TimeoutError as exc:
@@ -295,7 +295,7 @@ def get_hub() -> Hub:
     return _hub
 
 
-def authenticate_headers(headers: Mapping[str, str], cfg: Config) -> tuple[str, str, int]:
+def authenticate_headers(headers: Mapping[str, str], server: ServerConfig) -> tuple[str, str, int]:
     raw_name = headers.get("x-cpa-client-name") or headers.get("X-CPA-Client-Name") or ""
     name = normalize_client_name(raw_name)
     authorization = headers.get("authorization") or headers.get("Authorization") or ""
@@ -304,17 +304,17 @@ def authenticate_headers(headers: Mapping[str, str], cfg: Config) -> tuple[str, 
         token = authorization[7:].strip()
     if not valid_client_name(name):
         return "", "客户端名称非法", status.WS_1008_POLICY_VIOLATION
-    local = normalize_client_name(cfg.client_name)
+    local = normalize_client_name(server.client_name)
     if name == local:
         return "", "名称已被本机客户端占用", status.WS_1008_POLICY_VIOLATION
-    expected = cfg.cpa_server_client_keys.get(name, "")
+    expected = server.client_keys.get(name, "")
     if not expected or not token or not _tokens_match(token, expected):
         return "", "鉴权失败", status.WS_1008_POLICY_VIOLATION
     return name, "", 0
 
 
-def _handshake(websocket: WebSocket, cfg: Config) -> tuple[str, str, int]:
-    return authenticate_headers(websocket.headers, cfg)
+def _handshake(websocket: WebSocket, server: ServerConfig) -> tuple[str, str, int]:
+    return authenticate_headers(websocket.headers, server)
 
 
 def _tokens_match(provided: str, expected: str) -> bool:

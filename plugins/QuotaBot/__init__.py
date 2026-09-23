@@ -1,37 +1,39 @@
-from nonebot import get_driver, get_plugin_config, require
+from nonebot import get_driver, require
 from nonebot.plugin import PluginMetadata
 
 from .config import Config
 
 require("nonebot_plugin_alconna")
 
+from . import state as state  # noqa: E402
 from . import commands as commands  # noqa: E402, F401
-from .client import close_client  # noqa: E402
+from .cpa.client import close_client  # noqa: E402
 from .hub import get_hub  # noqa: E402
-from .oauth import cancel_all  # noqa: E402
-from .render import close_renderer  # noqa: E402
+from .cpa.oauth import cancel_all  # noqa: E402
+from .render.html import close_renderer  # noqa: E402
 from nonebot_plugin_alconna import __supported_adapters__  # noqa: E402
 
 __plugin_meta__ = PluginMetadata(
-    name="CliProxyAPI 管理",
-    description="通过聊天管理 CLIProxyAPI：OAuth 登录、凭证巡检、按平台额度汇总、开关账号",
-    usage="cpa status / cpa auth list / cpa quota [platform] / cpa login <provider>",
+    name="QuotaBot",
+    description="多渠额度查询与 CLIProxyAPI 管理：CPA 各平台额度汇总、火山方舟 Coding Plan、OAuth 登录与凭证巡检",
+    usage="/quota 查额度（/quota 火山 查火山方舟）；/cpa 管理 CLIProxyAPI",
     type="application",
     config=Config,
     supported_adapters=__supported_adapters__,
     extra={
         "author": "QuotaNoa-Bot",
-        "version": "0.1.0",
+        "version": "0.2.0",
     },
 )
 
-config = get_plugin_config(Config)
 driver = get_driver()
 
 
 @driver.on_startup
 async def _startup() -> None:
-    await get_hub().start(get_plugin_config(Config))
+    snapshot = state.get_snapshot()
+    get_hub().configure(snapshot.server)
+    await get_hub().start(snapshot.server)
 
 
 @driver.on_shutdown

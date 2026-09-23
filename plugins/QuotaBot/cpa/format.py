@@ -16,7 +16,7 @@ def mask_secret(value: str, keep: int = 4) -> str:
 
 
 def display_name(file: dict[str, Any], *, public: bool = False) -> str:
-    from .aliases import public_fallback, resolve_alias
+    from ..aliases import public_fallback, resolve_alias
 
     alias = resolve_alias(file)
     if alias:
@@ -73,7 +73,7 @@ def match_auth(files: list[dict[str, Any]], query: str) -> list[dict[str, Any]]:
             str(file.get("label") or ""),
             str(file.get("account") or ""),
         ]
-        from .aliases import resolve_alias
+        from ..aliases import resolve_alias
 
         alias = resolve_alias(file)
         if alias:
@@ -155,7 +155,7 @@ def format_auth_list(
 
 
 def format_auth_detail(file: dict[str, Any]) -> str:
-    from .aliases import resolve_alias
+    from ..aliases import resolve_alias
 
     alias = resolve_alias(file)
     lines = [

@@ -5,43 +5,35 @@ import json
 import re
 import time
 import uuid
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from nonebot import get_plugin_config
-
 from .client import CPAError, ManagementClient, get_client
-from .config import Config
+from .. import state
+from ..config import CpaConfig
+from ..model import (
+    CHANNEL_ALIASES,
+    PLATFORM_ORDER as _MODEL_PLATFORM_ORDER,
+    PLATFORM_TITLES as _MODEL_PLATFORM_TITLES,
+    WINDOW_ORDER,
+    AccountQuota,
+    PlatformQuota,
+    QuotaBoard,
+    QuotaWindow,
+    calculate_aggregate_windows,
+    calculate_grouped_earliest_resets,
+    calculate_plan_distribution,
+    calculate_total_reset_credits,
+    extract_earliest_reset_seconds,
+    format_reset_zh,
+    sort_windows,
+)
 from .format import display_name, is_cooling, is_unhealthy
 
-PLATFORM_ALIASES = {
-    "claude": "claude",
-    "anthropic": "claude",
-    "codex": "codex",
-    "gpt": "codex",
-    "openai": "codex",
-    "antigravity": "antigravity",
-    "反重力": "antigravity",
-    "kimi": "kimi",
-    "xai": "xai",
-    "x-ai": "xai",
-    "grok": "xai",
-    "gemini-cli": "gemini-cli",
-    "gemini": "gemini-cli",
-}
-
-PLATFORM_TITLES = {
-    "claude": "Claude",
-    "codex": "Codex",
-    "antigravity": "Antigravity",
-    "kimi": "Kimi",
-    "xai": "xAI / Grok",
-    "gemini-cli": "Gemini CLI",
-    "other": "其他",
-}
-
-PLATFORM_ORDER = ("claude", "codex", "antigravity", "kimi", "xai", "gemini-cli", "other")
+#: 平台别名/标题/顺序统一来自根模型（含 volcengine），避免多份来源。
+PLATFORM_ALIASES = CHANNEL_ALIASES
+PLATFORM_TITLES = _MODEL_PLATFORM_TITLES
+PLATFORM_ORDER = _MODEL_PLATFORM_ORDER
 
 CLAUDE_WINDOWS = (
     ("five_hour", "5h"),
@@ -81,83 +73,8 @@ _PLAN_BY_TIER_ID = {
     "legacy-tier": "Legacy",
 }
 
-WINDOW_ORDER = (
-    "gemini-5h",
-    "gemini-week",
-    "gemini-month",
-    "claude-gpt-5h",
-    "claude-gpt-week",
-    "claude-gpt-month",
-    "code-5h",
-    "code-7d",
-    "five_hour",
-    "seven_day",
-    "seven_day_opus",
-    "seven_day_sonnet",
-    "seven_day_oauth_apps",
-    "seven_day_cowork",
-    "iguana_necktie",
-    "extra",
-    "billing",
-    "grok-build",
-    "grok-chat",
-    "grok-imagine",
-    "usage",
-)
-
 _WINDOW_5H = 5 * 60 * 60
 _WINDOW_7D = 7 * 24 * 60 * 60
-
-
-@dataclass
-class QuotaWindow:
-    id: str
-    label: str
-    used_percent: float | None = None
-    remaining_percent: float | None = None
-    remaining: float | None = None
-    limit: float | None = None
-    reset_label: str = "-"
-    reset_at: float | None = None
-
-
-@dataclass
-class AccountQuota:
-    platform: str
-    name: str
-    auth_index: str
-    plan: str = ""
-    status: str = "unknown"
-    error: str = ""
-    windows: list[QuotaWindow] = field(default_factory=list)
-    disabled: bool = False
-    cooling: bool = False
-    client_name: str = ""
-    subscription_expires_at: float | None = None
-    subscription_expires_label: str = ""
-    reset_credits: int | None = None
-
-
-@dataclass
-class PlatformQuota:
-    platform: str
-    title: str
-    accounts: list[AccountQuota]
-    window_remain_sum: dict[str, float]
-    window_remain_count: dict[str, int]
-    window_labels: dict[str, str] = field(default_factory=dict)
-    remaining_sum: float = 0.0
-    limit_sum: float = 0.0
-
-
-@dataclass
-class QuotaBoard:
-    platforms: list[PlatformQuota]
-    queried: int = 0
-    ok: int = 0
-    failed: int = 0
-    skipped: int = 0
-    cached: bool = False
 
 
 _cache_key = ""
@@ -217,15 +134,15 @@ async def collect_quotas(
     wanted = _wanted_files(files, platform=platform, skip_disabled=skip_disabled)
     cache_id = _cache_id(wanted, platform)
     now = time.monotonic()
-    ttl = get_plugin_config(Config).cpa_quota_cache_ttl
+    ttl = state.get_snapshot().cpa.quota_cache_ttl
     global _cache_key, _cache_expires, _cache_board
     if not force and _cache_board and _cache_key == cache_id and now < _cache_expires:
         _cache_board.cached = True
         return _cache_board
 
-    cfg = get_plugin_config(Config)
+    cfg = state.get_snapshot().cpa
     client = get_client()
-    sem = asyncio.Semaphore(max(1, cfg.cpa_quota_concurrency))
+    sem = asyncio.Semaphore(max(1, cfg.quota_concurrency))
     reports = await asyncio.gather(
         *(_one_account(client, cfg, item, sem) for item in wanted)
     )
@@ -257,7 +174,7 @@ def board_from_accounts(accounts: list[AccountQuota], *, cached: bool = False) -
 
 
 def accounts_from_result(data: dict[str, Any] | Any) -> list[AccountQuota]:
-    from .protocol import QuotaQueryResult
+    from ..protocol import QuotaQueryResult
 
     result = data if isinstance(data, QuotaQueryResult) else QuotaQueryResult.model_validate(data)
     accounts: list[AccountQuota] = []
@@ -300,7 +217,7 @@ async def refresh_codex_quota(file: dict[str, Any]) -> str:
     auth_index = str(file.get("auth_index") or "")
     if not auth_index:
         raise CPAError("该凭证没有 auth_index，无法刷新 Codex 额度。")
-    cfg = get_plugin_config(Config)
+    cfg = state.get_snapshot().cpa
     client = get_client()
     headers = _codex_headers(file)
     credits = await _codex_upstream(client, cfg, auth_index, "GET", CODEX_RESET_CREDITS_URL, headers)
@@ -378,7 +295,7 @@ def _codex_headers(file: dict[str, Any]) -> dict[str, str]:
 
 async def _codex_upstream(
     client: ManagementClient,
-    cfg: Config,
+    cfg: CpaConfig,
     auth_index: str,
     method: str,
     url: str,
@@ -391,7 +308,7 @@ async def _codex_upstream(
         url,
         header=header,
         data=data,
-        timeout=cfg.cpa_quota_timeout,
+        timeout=cfg.quota_timeout,
     )
     status = int(response.get("status_code") or response.get("statusCode") or 0)
     body = _parse_body(response.get("body"))
@@ -549,231 +466,6 @@ def _parse_any_ts(value: Any) -> float | None:
     return None
 
 
-def calculate_plan_distribution(accounts: list[AccountQuota]) -> list[tuple[str, int]]:
-    """统计平台账号的计划分布。"""
-    from collections import Counter
-    plans = [a.plan.strip() for a in accounts if getattr(a, "plan", "") and a.plan.strip()]
-    if not plans:
-        return []
-    counter = Counter(plans)
-    return sorted(counter.items(), key=lambda x: (-x[1], x[0]))
-
-
-def calculate_total_reset_credits(accounts: list[AccountQuota]) -> int | None:
-    """计算平台下所有账号的可用重置点数总和。"""
-    found = False
-    total = 0
-    for account in accounts:
-        rc = getattr(account, "reset_credits", None)
-        if rc is not None:
-            try:
-                total += int(rc)
-                found = True
-            except (ValueError, TypeError):
-                pass
-    return total if found else None
-
-
-def _normalize_epoch_timestamp(val: float, now: float) -> float:
-    # If val is in milliseconds (e.g. > 1e11 or if val is > now * 500 when now > 1e8)
-    if val > 1e11:
-        return val / 1000.0
-    # Also handle relative or custom millisecond stamps when now is small (e.g. in synthetic tests where now=10000)
-    if now < 1e8 and val > 1e6:
-        return val / 1000.0
-    return val
-
-
-def _classify_model_category(window_id: str, window_label: str = "") -> str:
-    wid = (window_id or "").strip().lower()
-    lbl = (window_label or "").strip().lower()
-
-    if wid.startswith("gemini-") or lbl.startswith("gemini"):
-        return "Gemini"
-    if (
-        wid.startswith("claude-gpt-")
-        or lbl.startswith("claude-gpt")
-        or lbl.startswith("claude/gpt")
-    ):
-        return "Claude/GPT"
-    if wid.startswith("code-") or lbl.startswith("codex") or lbl.startswith("code"):
-        return "Codex"
-    if (
-        wid in {"five_hour", "extra", "iguana_necktie"}
-        or wid.startswith("seven_day")
-        or lbl.startswith("claude")
-    ):
-        return "Claude"
-    if wid.startswith("grok-") or wid == "billing" or "grok" in lbl or "xai" in lbl:
-        return "xAI"
-    if wid.startswith("limit-") or wid == "usage" or "kimi" in lbl:
-        return "Kimi"
-
-    # Fallback to normalized window label or id or 其他
-    fallback = (window_label or window_id or "").strip()
-    return fallback if fallback else "其他"
-
-
-def _classify_period_category(window_id: str, window_label: str = "") -> str:
-    blob = f"{window_id} {window_label}".strip().lower()
-    if any(token in blob for token in ("5h", "five", "hour", "滚动", "rolling", "用量", "usage")):
-        return "小时额度"
-    if any(token in blob for token in ("week", "weekly", "7d", "seven", "周")):
-        return "周额度"
-    if any(token in blob for token in ("month", "monthly", "30d", "月")):
-        return "月额度"
-    return "其他额度"
-
-
-_MODEL_CATEGORY_ORDER = ("Gemini", "Claude/GPT", "Codex", "Claude", "xAI", "Kimi")
-_PERIOD_CATEGORY_ORDER = ("小时额度", "周额度", "月额度", "其他额度")
-
-
-def calculate_grouped_earliest_resets(
-    accounts: list[AccountQuota],
-    now: float | None = None,
-) -> list[dict[str, Any]]:
-    """按模型分类与周期分类计算所有账号窗口中最早的未来刷新倒计时。"""
-    current_time = time.time() if now is None else float(now)
-    # Map (model_category, period_category) -> best_dict
-    grouped: dict[tuple[str, str], dict[str, Any]] = {}
-
-    for account in accounts:
-        for window in account.windows:
-            diff: float | None = None
-            reset_at = getattr(window, "reset_at", None)
-            if reset_at is not None and isinstance(reset_at, (int, float)) and not isinstance(reset_at, bool):
-                epoch = _normalize_epoch_timestamp(float(reset_at), current_time)
-                val = epoch - current_time
-                if val > 0:
-                    diff = val
-                else:
-                    # Numeric reset_at exists but in the past; do not fall back to stale reset_label
-                    continue
-            elif window.reset_label and window.reset_label != "-" and "过期" not in window.reset_label:
-                sec = _parse_reset_label_duration(window.reset_label)
-                if sec is not None and sec > 0:
-                    diff = sec
-
-            if diff is None or diff <= 0:
-                continue
-
-            model_cat = _classify_model_category(window.id, window.label)
-            period_cat = _classify_period_category(window.id, window.label)
-            key = (model_cat, period_cat)
-
-            if key not in grouped or diff < grouped[key]["seconds"]:
-                grouped[key] = {
-                    "model": model_cat,
-                    "period": period_cat,
-                    "seconds": diff,
-                    "window_id": window.id,
-                    "window_label": window.label,
-                }
-
-    model_rank = {name: idx for idx, name in enumerate(_MODEL_CATEGORY_ORDER)}
-    period_rank = {name: idx for idx, name in enumerate(_PERIOD_CATEGORY_ORDER)}
-
-    def _sort_key(item: dict[str, Any]) -> tuple[int, str, int, str]:
-        m = item["model"]
-        p = item["period"]
-        return (
-            model_rank.get(m, len(_MODEL_CATEGORY_ORDER)),
-            m,
-            period_rank.get(p, len(_PERIOD_CATEGORY_ORDER)),
-            p,
-        )
-
-    return sorted(grouped.values(), key=_sort_key)
-
-
-def extract_earliest_reset_seconds(
-    accounts: list[AccountQuota],
-    now: float | None = None,
-) -> float | None:
-    """计算平台下所有账号窗口中最快的未来刷新倒计时秒数。"""
-    grouped = calculate_grouped_earliest_resets(accounts, now=now)
-    if not grouped:
-        return None
-    return min(item["seconds"] for item in grouped)
-
-
-def _parse_reset_label_duration(text: str) -> float | None:
-    days = 0
-    hours = 0
-    mins = 0
-    matched = False
-    m = re.search(r"(\d+)\s*d", text)
-    if m:
-        days = int(m.group(1))
-        matched = True
-    m = re.search(r"(\d+)\s*h", text)
-    if m:
-        hours = int(m.group(1))
-        matched = True
-    m = re.search(r"(\d+)\s*m", text)
-    if m:
-        mins = int(m.group(1))
-        matched = True
-    if matched:
-        return float(days * 86400 + hours * 3600 + mins * 60)
-    return None
-
-
-def calculate_aggregate_windows(
-    section: PlatformQuota, accounts: list[AccountQuota] | None = None
-) -> list[dict[str, Any]]:
-    """
-    计算聚合窗口配额（支持 sum% + average% + account count）。
-    """
-    accts = accounts if accounts is not None else section.accounts
-    win_sums: dict[str, float] = {}
-    win_counts: dict[str, int] = {}
-    win_modes: dict[str, str] = {}
-    win_labels: dict[str, str] = dict(getattr(section, "window_labels", {}) or {})
-
-    for account in accts:
-        for w in account.windows:
-            win_labels.setdefault(w.id, w.label)
-            is_grok_product = w.id.startswith("grok-")
-            pct = w.used_percent if is_grok_product else w.remaining_percent
-            win_modes[w.id] = "used" if is_grok_product else "remaining"
-            if pct is None and w.used_percent is not None:
-                pct = w.used_percent if is_grok_product else max(0.0, 100.0 - w.used_percent)
-            elif (
-                pct is None
-                and w.remaining is not None
-                and w.limit is not None
-                and w.limit > 0
-            ):
-                pct = max(0.0, min(100.0, (w.remaining / w.limit) * 100.0))
-
-            if pct is not None:
-                win_sums[w.id] = win_sums.get(w.id, 0.0) + pct
-                win_counts[w.id] = win_counts.get(w.id, 0) + 1
-
-    results = []
-    dummy_windows = [QuotaWindow(id=wid, label=win_labels.get(wid, wid)) for wid in win_sums]
-    sorted_order = sort_windows(dummy_windows)
-
-    for w in sorted_order:
-        wid = w.id
-        total_pct = win_sums[wid]
-        count = win_counts[wid]
-        avg_pct = total_pct / count if count > 0 else 0.0
-        results.append(
-            {
-                "id": wid,
-                "label": win_labels.get(wid, wid),
-                "sum_percent": total_pct,
-                "avg_percent": avg_pct,
-                "count": count,
-                "mode": win_modes.get(wid, "remaining"),
-            }
-        )
-    return results
-
-
 def _codex_credit_list(payload: dict[str, Any]) -> list[dict[str, Any]]:
     for key in ("credits", "items", "rate_limit_reset_credits", "rateLimitResetCredits"):
         raw = payload.get(key)
@@ -883,7 +575,7 @@ def format_account_quota(account: AccountQuota) -> str:
 
 async def _one_account(
     client: ManagementClient,
-    cfg: Config,
+    cfg: CpaConfig,
     file: dict[str, Any],
     sem: asyncio.Semaphore,
 ) -> AccountQuota:
@@ -924,7 +616,7 @@ async def _one_account(
     return report
 
 
-async def _fill_claude(client: ManagementClient, cfg: Config, report: AccountQuota) -> None:
+async def _fill_claude(client: ManagementClient, cfg: CpaConfig, report: AccountQuota) -> None:
     payload = await _upstream_json(
         client,
         cfg,
@@ -966,7 +658,7 @@ def _codex_account_id(file: dict[str, Any]) -> str:
 
 async def _fill_codex(
     client: ManagementClient,
-    cfg: Config,
+    cfg: CpaConfig,
     file: dict[str, Any],
     report: AccountQuota,
 ) -> None:
@@ -1021,7 +713,7 @@ async def _fill_codex(
         report.error = saved_error
 
 
-async def _fill_kimi(client: ManagementClient, cfg: Config, report: AccountQuota) -> None:
+async def _fill_kimi(client: ManagementClient, cfg: CpaConfig, report: AccountQuota) -> None:
     payload = await _upstream_json(
         client,
         cfg,
@@ -1042,7 +734,7 @@ async def _fill_kimi(client: ManagementClient, cfg: Config, report: AccountQuota
             report.subscription_expires_label = exp_label
 
 
-async def _fill_xai(client: ManagementClient, cfg: Config, report: AccountQuota) -> None:
+async def _fill_xai(client: ManagementClient, cfg: CpaConfig, report: AccountQuota) -> None:
     payload = await _upstream_json(
         client,
         cfg,
@@ -1064,7 +756,7 @@ async def _fill_xai(client: ManagementClient, cfg: Config, report: AccountQuota)
     # Note: Requirement 3: Do NOT treat xAI billingPeriodEnd as subscription expiry.
 
 
-async def _fill_antigravity(client: ManagementClient, cfg: Config, report: AccountQuota) -> None:
+async def _fill_antigravity(client: ManagementClient, cfg: CpaConfig, report: AccountQuota) -> None:
     headers = {
         "Authorization": "Bearer $TOKEN$",
         "Content-Type": "application/json",
@@ -1090,7 +782,7 @@ async def _fill_antigravity(client: ManagementClient, cfg: Config, report: Accou
             report.subscription_expires_label = exp_label
 
 
-async def _fill_gemini(client: ManagementClient, cfg: Config, report: AccountQuota) -> None:
+async def _fill_gemini(client: ManagementClient, cfg: CpaConfig, report: AccountQuota) -> None:
     payload = await _upstream_json(
         client,
         cfg,
@@ -1358,46 +1050,6 @@ def parse_antigravity_plan(payload: dict[str, Any]) -> str:
     return _plan_from_name(name) or _sanitize_plan(name)
 
 
-def sort_windows(windows: list[QuotaWindow]) -> list[QuotaWindow]:
-    indexed = {wid: index for index, wid in enumerate(WINDOW_ORDER)}
-
-    def _key(window: QuotaWindow) -> tuple[int, int, str]:
-        return (_window_span(window), indexed.get(window.id, len(WINDOW_ORDER)), window.label)
-
-    return sorted(windows, key=_key)
-
-
-def format_reset_zh(reset_label: str) -> str:
-    text = (reset_label or "").strip()
-    if not text or text == "-":
-        return ""
-    if text == "已过期":
-        return "额度已过期"
-    parts: list[str] = []
-    for amount, unit, zh in (
-        (r"(\d+)\s*d", "d", "天"),
-        (r"(\d+)\s*h", "h", "小时"),
-        (r"(\d+)\s*m", "m", "分"),
-    ):
-        match = re.search(amount, text, re.I)
-        if match:
-            parts.append(f"{int(match.group(1))}{zh}")
-    if parts:
-        return "在 " + "".join(parts) + " 后刷新额度"
-    return f"在 {text} 后刷新额度"
-
-
-def _window_span(window: QuotaWindow) -> int:
-    blob = f"{window.id} {window.label}".lower()
-    if any(token in blob for token in ("5h", "five", "hour", "滚动", "rolling")):
-        return 0
-    if any(token in blob for token in ("week", "weekly", "7d", "seven", "周")):
-        return 1
-    if any(token in blob for token in ("month", "monthly", "月")):
-        return 2
-    return 3
-
-
 def _plan_from_auth_file(file: dict[str, Any]) -> str:
     subscription = file.get("subscription")
     if isinstance(subscription, dict):
@@ -1475,7 +1127,7 @@ def _sanitize_plan(value: Any) -> str:
     return named or text
 
 
-async def _antigravity_plan(client: ManagementClient, cfg: Config, report: AccountQuota) -> str:
+async def _antigravity_plan(client: ManagementClient, cfg: CpaConfig, report: AccountQuota) -> str:
     headers = {
         "Authorization": "Bearer $TOKEN$",
         "Content-Type": "application/json",
@@ -1522,7 +1174,7 @@ def _antigravity_window(group_name: str, bucket_name: str) -> tuple[str, str]:
 
 async def _upstream_json(
     client: ManagementClient,
-    cfg: Config,
+    cfg: CpaConfig,
     report: AccountQuota,
     method: str,
     url: str,
@@ -1536,7 +1188,7 @@ async def _upstream_json(
             url,
             header=header,
             data=data,
-            timeout=cfg.cpa_quota_timeout,
+            timeout=cfg.quota_timeout,
         )
     except CPAError as exc:
         report.error = str(exc)
@@ -1645,7 +1297,7 @@ def _format_platform(section: PlatformQuota, account_limit: int) -> list[str]:
         lines.append(f"  {account.name}{plan}{flag}  {windows}")
     extra = len(section.accounts) - len(visible)
     if extra > 0:
-        lines.append(f"  ... 另有 {extra} 个账号，用 cpa quota {section.platform} 查看")
+        lines.append(f"  ... 另有 {extra} 个账号，用 /quota {section.platform} 查看")
     return lines
 
 

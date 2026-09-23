@@ -1,6 +1,6 @@
 # Windows XP (Luna) Assets Source & License Documentation
 
-This directory contains lightweight asset documentation and licenses for the `winxp` theme in `cpaplugin`.
+This directory contains lightweight asset documentation and licenses for the `winxp` theme in `QuotaBot`.
 
 ## 1. XP Window Controls & Skeuomorphic Styling
 - **Source**: Inspired by Windows XP Luna UI and minimal design techniques from [XP.css](https://github.com/botoxparty/XP.css) (MIT License).

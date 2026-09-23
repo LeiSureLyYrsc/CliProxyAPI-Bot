@@ -1,6 +1,6 @@
 # macOS Terminal Theme Sources & References
 
-This directory contains theme resources and metadata for the `mac` theme in `cpaplugin`.
+This directory contains theme resources and metadata for the `mac` theme in `QuotaBot`.
 
 ## 1. Visual Style & Philosophy
 - **Inspiration**: Apple macOS terminal window frame and dark glass Dracula-inspired color scheme.

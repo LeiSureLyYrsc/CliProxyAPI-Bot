@@ -1,6 +1,6 @@
 # Material Design 3 (MD3) Theme Sources & References
 
-This directory contains theme resources and metadata for the `md3` theme in `cpaplugin`.
+This directory contains theme resources and metadata for the `md3` theme in `QuotaBot`.
 
 ## 1. Visual Style & Philosophy
 - **Inspiration**: Google Material You / Material Design 3 design language.

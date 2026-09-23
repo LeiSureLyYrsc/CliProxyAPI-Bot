@@ -1,6 +1,6 @@
 # Default Theme (shadcn) Sources & References
 
-This directory contains theme resources and metadata for the `default` theme in `cpaplugin`.
+This directory contains theme resources and metadata for the `default` theme in `QuotaBot`.
 
 ## 1. Visual Style & Philosophy
 - **Inspiration**: Design patterns inspired by [shadcn/ui](https://ui.shadcn.com/) (MIT License).

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any
 from urllib.parse import urlparse
 
 import httpx
-from nonebot import get_plugin_config
 
-from .config import Config
+from ..config import CpaConfig
 
 _AUTH_FAIL_COOLDOWN = 60.0
 _FORBIDDEN_COOLDOWN = 300.0
@@ -69,15 +69,15 @@ class ManagementClient:
         self._auth_block_reason = ""
 
     @classmethod
-    def from_config(cls, cfg: Config) -> ManagementClient:
-        return cls(cfg.cpa_base_url, cfg.cpa_management_key, cfg.cpa_timeout)
+    def from_config(cls, cfg: Any) -> ManagementClient:
+        return cls(cfg.base_url, cfg.management_key, cfg.timeout)
 
     async def aclose(self) -> None:
         await self._client.aclose()
 
     def _ensure_ready(self) -> None:
         if not self._key:
-            raise CPAError("未配置 CPA_MANAGEMENT_KEY，无法调用管理接口。")
+            raise CPAError("未配置 CPA 管理密钥（cpa.management_key），无法调用管理接口。")
         now = time.monotonic()
         if now < self._auth_blocked_until:
             raise CPAError(self._auth_block_reason)
@@ -266,20 +266,62 @@ class ManagementClient:
 
 
 _client: ManagementClient | None = None
+_retired: list[ManagementClient] = []
 
 
 def get_client() -> ManagementClient:
     global _client
     if _client is None:
-        _client = ManagementClient.from_config(get_plugin_config(Config))
+        from .. import state
+
+        _client = ManagementClient.from_config(state.get_snapshot().cpa)
     return _client
+
+
+def reset_client() -> None:
+    """丢弃缓存的客户端，下次 get_client() 按最新快照重建。
+
+    旧客户端放入 _retired 并调度异步关闭，避免长期持有打开的连接池。
+    """
+    global _client
+    if _client is not None:
+        _retired.append(_client)
+        _client = None
+        _schedule_close_retired()
+
+
+def _schedule_close_retired() -> None:
+    if not _retired:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    clients = list(_retired)
+    _retired.clear()
+
+    async def _close_all() -> None:
+        for client in clients:
+            try:
+                await client.aclose()
+            except Exception:
+                pass
+
+    loop.create_task(_close_all())
 
 
 async def close_client() -> None:
     global _client
+    clients = list(_retired)
+    _retired.clear()
     if _client is not None:
-        await _client.aclose()
+        clients.append(_client)
         _client = None
+    for client in clients:
+        try:
+            await client.aclose()
+        except Exception:
+            pass
 
 
 def _response_detail(response: httpx.Response) -> str:

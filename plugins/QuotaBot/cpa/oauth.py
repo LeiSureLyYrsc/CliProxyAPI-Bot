@@ -4,13 +4,12 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any
 
-from nonebot import get_plugin_config
 from nonebot.adapters import Bot, Event
 from nonebot.log import logger
 from nonebot_plugin_alconna import Target, UniMessage, get_target
 
 from .client import CPAError, get_client
-from .config import Config
+from .. import state
 from .format import extract_oauth_callback_url, format_login_prompt
 
 BUILTIN_AUTH_URLS: dict[str, str] = {
@@ -190,9 +189,9 @@ def _login_text(provider: str, payload: dict[str, Any]) -> str:
 
 
 async def _poll(pending: PendingLogin) -> None:
-    cfg = get_plugin_config(Config)
-    interval = max(1.0, cfg.cpa_oauth_poll_interval)
-    timeout = max(interval, cfg.cpa_oauth_timeout)
+    cfg = state.get_snapshot().cpa
+    interval = max(1.0, cfg.oauth_poll_interval)
+    timeout = max(interval, cfg.oauth_timeout)
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
     client = get_client()

@@ -31,6 +31,9 @@ data/
 # Local tests (keep locally, untracked)
 tests/
 
+# Deepwork session state (git-local)
+.slim/deepwork/
+
 # Logs / OS / IDE
 *.log
 .DS_Store

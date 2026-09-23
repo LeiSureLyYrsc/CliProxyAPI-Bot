@@ -1,6 +1,6 @@
 # Windows 7 (Aero Glass) Assets Source & License Documentation
 
-This directory contains asset documentation and licenses for the `win7` theme in `cpaplugin`.
+This directory contains asset documentation and licenses for the `win7` theme in `QuotaBot`.
 
 ## 1. Windows 7 Aero Glass Window Controls & Aesthetics
 - **Source & Inspiration**: Inspired by the official Windows 7 Aero Glass visual language and design techniques from [7.css](https://github.com/khang-nd/7.css) (MIT License).

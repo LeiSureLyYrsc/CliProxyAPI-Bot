@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .model import is_channel_name, normalize_channel
 from .protocol import normalize_client_name, valid_client_name
-from .quota import is_platform_query, normalize_platform
 
 ALL_FLAGS = {"--all", "-all", "-a"}
 CLIENT_FLAGS = {"--client", "-c"}
@@ -28,7 +28,7 @@ def tokenize(text: str) -> list[str]:
 
 def strip_quota_head(parts: list[str]) -> list[str]:
     leftover = list(parts)
-    if leftover and leftover[0].lstrip("/").lower() == "cpa":
+    if leftover and leftover[0].lstrip("/").lower() in {"cpa", "quota"}:
         leftover = leftover[1:]
     if leftover and leftover[0].lower() == "quota":
         leftover = leftover[1:]
@@ -100,7 +100,7 @@ def parse_quota_parts(
     ambiguous: list[str] = []
     for token in positional:
         name = normalize_client_name(token)
-        platform = normalize_platform(token) if is_platform_query(token) else ""
+        platform = normalize_channel(token) if is_channel_name(token) else ""
         is_known_client = name in known
         if platform and is_known_client:
             ambiguous.append(token)
@@ -118,8 +118,8 @@ def parse_quota_parts(
         return QuotaSelection(
             error=(
                 f"「{shown}」同时是平台名称和客户端名称。"
-                f"\n查询平台：cpa quota {ambiguous[0]} --client {default}"
-                f"\n查询客户端：cpa quota --client {ambiguous[0]}"
+                f"\n查询平台：/quota {ambiguous[0]} --client {default}"
+                f"\n查询客户端：/quota --client {ambiguous[0]}"
             )
         )
     if len(platforms) > 1:

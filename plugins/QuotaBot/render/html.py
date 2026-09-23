@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .quota import (
+from ..model import (
     AccountQuota,
     PlatformQuota,
     QuotaBoard,
@@ -22,7 +22,7 @@ from .quota import (
     sort_windows,
 )
 
-from .theme_loader import get_theme_registry
+from .themes import get_theme_registry
 
 DEFAULT_CARDS_PER_ROW = 4
 GRID_ROWS_PER_IMAGE = 2
@@ -93,26 +93,14 @@ def get_platform_icon_uri(platform: str) -> str:
 
 
 def get_render_settings_adapter() -> dict[str, Any]:
-    """
-    隔离读取渲染配置，若后端模块存在 get_render_settings() 则调用，
-    否则基于默认值回退。
-    返回包含 canonical theme 和 cards_per_row (1..6) 的字典。
-    """
-    try:
-        from . import render_settings  # type: ignore
+    """读取渲染设置，返回 canonical theme 与 cards_per_row (1..6)。
 
-        if hasattr(render_settings, "get_render_settings"):
-            res = render_settings.get_render_settings()
-            if isinstance(res, dict):
-                return _normalize_settings(res)
-            if hasattr(res, "to_dict"):
-                return _normalize_settings(res.to_dict())
-            if hasattr(res, "__dict__"):
-                return _normalize_settings(res.__dict__)
-    except Exception:
-        pass
+    直接依赖 ``render.settings``（不再静默回退），避免配置错误被掩盖。
+    """
+    from . import settings
 
-    return _normalize_settings({"theme": "default", "cards_per_row": DEFAULT_CARDS_PER_ROW})
+    res = settings.get_render_settings()
+    return _normalize_settings(res.to_dict())
 
 
 def _normalize_settings(raw: dict[str, Any]) -> dict[str, Any]:
