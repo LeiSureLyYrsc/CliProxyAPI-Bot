@@ -49,7 +49,8 @@ class AccountQuota:
     windows: list[QuotaWindow] = field(default_factory=list)
     disabled: bool = False
     cooling: bool = False
-    client_name: str = ""
+    #: 该账号所属的查询来源实例名（CPA 实例名；火山等本地渠道为空）。
+    instance: str = ""
     subscription_expires_at: float | None = None
     subscription_expires_label: str = ""
     reset_credits: int | None = None
@@ -503,10 +504,11 @@ def build_board(reports: list[AccountQuota]) -> QuotaBoard:
     )
 
 
-def stamp_client(board: QuotaBoard, client_name: str) -> QuotaBoard:
+def stamp_instance(board: QuotaBoard, instance: str) -> QuotaBoard:
+    """把实例名写入板内所有账号，用于多实例分组展示。"""
     for section in board.platforms:
         for account in section.accounts:
-            account.client_name = client_name
+            account.instance = instance
     return board
 
 

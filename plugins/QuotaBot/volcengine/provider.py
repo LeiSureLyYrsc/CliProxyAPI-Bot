@@ -1,6 +1,6 @@
 """火山方舟额度 Provider：读取配置账号 → 查询 → 统一额度板。
 
-本地渠道（``local_only``）：凭据来自本机 ``volcengine.accounts``，不参与远程客户端 ``--all`` 扩散。
+本地渠道（``local_only``）：凭据来自本机 ``volcengine.accounts``，不属于任何 CPA 实例。
 """
 
 from __future__ import annotations
@@ -8,7 +8,7 @@ from __future__ import annotations
 from .. import state
 from ..aliases import resolve_alias_for_keys
 from ..config import VolcengineAccount
-from ..model import AccountQuota, QuotaBoard, board_from_accounts, stamp_client
+from ..model import AccountQuota, QuotaBoard, board_from_accounts
 from .client import VolcengineError, query_coding_plan_usage
 from .quota import account_from_usage
 
@@ -35,5 +35,4 @@ async def collect_board(accounts: list[VolcengineAccount] | None = None) -> Quot
         if alias:
             report.name = alias
         reports.append(report)
-    board = board_from_accounts(reports)
-    return stamp_client(board, state.get_snapshot().server.client_name)
+    return board_from_accounts(reports)

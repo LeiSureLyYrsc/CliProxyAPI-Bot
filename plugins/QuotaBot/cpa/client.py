@@ -1,16 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-import time
 from typing import Any
 from urllib.parse import urlparse
 
 import httpx
 
 from ..config import CpaConfig
-
-_AUTH_FAIL_COOLDOWN = 60.0
-_FORBIDDEN_COOLDOWN = 300.0
 
 # 只允许额度巡检用到的上游。不要把 /api-call 做成聊天里的任意代发。
 _API_CALL_ALLOWLIST: tuple[tuple[str, str], ...] = (
@@ -65,8 +61,6 @@ class ManagementClient:
                 "User-Agent": "QuotaNoa-Bot/0.1.0",
             },
         )
-        self._auth_blocked_until = 0.0
-        self._auth_block_reason = ""
 
     @classmethod
     def from_config(cls, cfg: Any) -> ManagementClient:
@@ -77,14 +71,7 @@ class ManagementClient:
 
     def _ensure_ready(self) -> None:
         if not self._key:
-            raise CPAError("未配置 CPA 管理密钥（cpa.management_key），无法调用管理接口。")
-        now = time.monotonic()
-        if now < self._auth_blocked_until:
-            raise CPAError(self._auth_block_reason)
-
-    def _block_auth(self, seconds: float, reason: str) -> None:
-        self._auth_blocked_until = time.monotonic() + seconds
-        self._auth_block_reason = reason
+            raise CPAError("该 CPA 实例未配置管理密钥（management_key），无法调用管理接口。")
 
     async def request(
         self,
@@ -104,21 +91,13 @@ class ManagementClient:
             raise CPAError(f"无法连接 CLIProxyAPI：{exc}") from exc
 
         if response.status_code == 401:
-            reason = (
-                "管理密钥无效（401）。请检查 CPA_MANAGEMENT_KEY。"
-                "为避免连续失败导致 IP 被封禁约 30 分钟，1 分钟内将暂停后续请求。"
-            )
-            self._block_auth(_AUTH_FAIL_COOLDOWN, reason)
-            raise CPAError(reason)
+            raise CPAError("管理密钥无效（401）。请检查该实例的 management_key。")
         if response.status_code == 403:
             detail = _response_detail(response)
-            reason = (
+            raise CPAError(
                 f"管理接口拒绝访问（403）{detail}。"
                 "若 Bot 与 CPA 不在同一台机器，需要 allow-remote 或 MANAGEMENT_PASSWORD。"
-                "5 分钟内将暂停后续请求，以免触发 IP 封禁。"
             )
-            self._block_auth(_FORBIDDEN_COOLDOWN, reason)
-            raise CPAError(reason)
         if response.status_code >= 400:
             raise CPAError(
                 f"CLIProxyAPI 返回 HTTP {response.status_code}{_response_detail(response)}"
@@ -265,28 +244,42 @@ class ManagementClient:
         return plugins if isinstance(plugins, list) else []
 
 
-_client: ManagementClient | None = None
+_clients: dict[str, ManagementClient] = {}
 _retired: list[ManagementClient] = []
 
 
-def get_client() -> ManagementClient:
-    global _client
-    if _client is None:
-        from .. import state
+def get_client(name: str) -> ManagementClient:
+    """按实例名取（或惰性创建）管理客户端。
 
-        _client = ManagementClient.from_config(state.get_snapshot().cpa)
-    return _client
+    未配置该实例时抛 ``CPAError``，消息可直接发给管理员。
+    """
+    from .. import state
+
+    instance = state.get_snapshot().cpa.get(name)
+    if instance is None:
+        known = "、".join(state.get_snapshot().cpa.names()) or "（未配置）"
+        raise CPAError(f"没有名为「{name}」的 CPA 实例。已配置实例：{known}")
+    client = _clients.get(instance.name)
+    if client is None:
+        client = ManagementClient.from_config(instance)
+        _clients[instance.name] = client
+    return client
 
 
-def reset_client() -> None:
+def reset_client(name: str | None = None) -> None:
     """丢弃缓存的客户端，下次 get_client() 按最新快照重建。
 
-    旧客户端放入 _retired 并调度异步关闭，避免长期持有打开的连接池。
+    传 ``name`` 只重建该实例，传 None 重建全部。旧客户端放入 _retired 并调度
+    异步关闭，避免长期持有打开的连接池。
     """
-    global _client
-    if _client is not None:
-        _retired.append(_client)
-        _client = None
+    if name is None:
+        retired = list(_clients.values())
+        _clients.clear()
+    else:
+        client = _clients.pop(name, None)
+        retired = [client] if client is not None else []
+    if retired:
+        _retired.extend(retired)
         _schedule_close_retired()
 
 
@@ -311,12 +304,10 @@ def _schedule_close_retired() -> None:
 
 
 async def close_client() -> None:
-    global _client
     clients = list(_retired)
     _retired.clear()
-    if _client is not None:
-        clients.append(_client)
-        _client = None
+    clients.extend(_clients.values())
+    _clients.clear()
     for client in clients:
         try:
             await client.aclose()

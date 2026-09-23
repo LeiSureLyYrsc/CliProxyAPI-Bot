@@ -10,7 +10,7 @@ from typing import Any
 
 from .client import CPAError, ManagementClient, get_client
 from .. import state
-from ..config import CpaConfig
+from ..config import CpaInstance
 from ..model import (
     CHANNEL_ALIASES,
     PLATFORM_ORDER as _MODEL_PLATFORM_ORDER,
@@ -29,7 +29,7 @@ from ..model import (
     extract_earliest_reset_seconds,
     format_reset_zh,
     sort_windows,
-    stamp_client,
+    stamp_instance,
     window_is_used,
 )
 from .format import display_name, is_cooling, is_unhealthy
@@ -84,9 +84,8 @@ _WINDOW_5H = 5 * 60 * 60
 _WINDOW_7D = 7 * 24 * 60 * 60
 
 
-_cache_key = ""
-_cache_expires = 0.0
-_cache_board: QuotaBoard | None = None
+#: 额度缓存：cache_id → (过期时间, 板)。按实例 + 平台分桶，多实例互不干扰。
+_quota_cache: dict[str, tuple[float, QuotaBoard]] = {}
 
 
 def normalize_platform(value: str) -> str:
@@ -106,21 +105,25 @@ def is_platform_query(value: str) -> bool:
 def peek_quota_cache(
     files: list[dict[str, Any]],
     *,
+    instance: str,
     platform: str | None = None,
     skip_disabled: bool = True,
 ) -> QuotaBoard | None:
     wanted = _wanted_files(files, platform=platform, skip_disabled=skip_disabled)
-    cache_id = _cache_id(wanted, platform)
+    cache_id = _cache_id(wanted, platform, instance)
     now = time.monotonic()
-    if _cache_board and _cache_key == cache_id and now < _cache_expires:
-        _cache_board.cached = True
-        return _cache_board
-    if platform and _cache_board and now < _cache_expires:
+    entry = _quota_cache.get(cache_id)
+    if entry and now < entry[0]:
+        board = entry[1]
+        board.cached = True
+        return board
+    if platform:
         full = _wanted_files(files, platform=None, skip_disabled=skip_disabled)
-        if _cache_key == _cache_id(full, None):
+        entry = _quota_cache.get(_cache_id(full, None, instance))
+        if entry and now < entry[0]:
             reports = [
                 account
-                for section in _cache_board.platforms
+                for section in entry[1].platforms
                 if section.platform == platform
                 for account in section.accounts
             ]
@@ -134,85 +137,104 @@ def peek_quota_cache(
 async def collect_quotas(
     files: list[dict[str, Any]],
     *,
+    instance: str,
     platform: str | None = None,
     force: bool = False,
     skip_disabled: bool = True,
 ) -> QuotaBoard:
     wanted = _wanted_files(files, platform=platform, skip_disabled=skip_disabled)
-    cache_id = _cache_id(wanted, platform)
+    cache_id = _cache_id(wanted, platform, instance)
     now = time.monotonic()
-    ttl = state.get_snapshot().cpa.quota_cache_ttl
-    global _cache_key, _cache_expires, _cache_board
-    if not force and _cache_board and _cache_key == cache_id and now < _cache_expires:
-        _cache_board.cached = True
-        return _cache_board
+    if not force:
+        entry = _quota_cache.get(cache_id)
+        if entry and now < entry[0]:
+            board = entry[1]
+            board.cached = True
+            return board
 
-    cfg = state.get_snapshot().cpa
-    client = get_client()
+    cfg = state.get_snapshot().cpa.get(instance)
+    if cfg is None:
+        raise CPAError(f"没有名为「{instance}」的 CPA 实例。")
+    client = get_client(instance)
     sem = asyncio.Semaphore(max(1, cfg.quota_concurrency))
     reports = await asyncio.gather(
         *(_one_account(client, cfg, item, sem) for item in wanted)
     )
-    board = _build_board(list(reports))
-    _cache_key = cache_id
-    _cache_expires = now + max(0.0, ttl)
-    _cache_board = board
+    board = stamp_instance(_build_board(list(reports)), instance)
+    _quota_cache[cache_id] = (now + max(0.0, cfg.quota_cache_ttl), board)
     return board
 
 
-def clear_quota_cache() -> None:
-    global _cache_key, _cache_expires, _cache_board
-    _cache_key = ""
-    _cache_expires = 0.0
-    _cache_board = None
+def clear_quota_cache(instance: str | None = None) -> None:
+    """清空额度缓存。传 ``instance`` 只清该实例，传 None 清全部。"""
+    if instance is None:
+        _quota_cache.clear()
+        return
+    prefix = f"{instance}:"
+    for key in [key for key in _quota_cache if key.startswith(prefix)]:
+        _quota_cache.pop(key, None)
 
 
 def accounts_from_result(data: dict[str, Any] | Any) -> list[AccountQuota]:
-    from ..protocol import QuotaQueryResult
+    """兼容旧远程协议的结果转换（远程客户端已移除，仅保留给历史调用）。
 
-    result = data if isinstance(data, QuotaQueryResult) else QuotaQueryResult.model_validate(data)
+    传入 ``{"accounts": [...]}`` 或带 ``accounts`` 属性的对象，转换为 AccountQuota 列表。
+    """
+    if isinstance(data, dict):
+        raw_accounts = data.get("accounts")
+        default_instance = str(data.get("instance") or data.get("client_name") or "")
+    else:
+        raw_accounts = getattr(data, "accounts", None)
+        default_instance = str(getattr(data, "instance", "") or "")
     accounts: list[AccountQuota] = []
-    for item in result.accounts:
+    if not isinstance(raw_accounts, list):
+        return accounts
+    for item in raw_accounts:
+        entry = item if isinstance(item, dict) else getattr(item, "__dict__", {})
+        windows = entry.get("windows") or []
         accounts.append(
             AccountQuota(
-                platform=item.platform,
-                name=item.name,
-                auth_index=item.auth_index,
-                plan=item.plan,
-                status=item.status,
-                error=item.error,
+                platform=str(entry.get("platform") or "other"),
+                name=str(entry.get("name") or ""),
+                auth_index=str(entry.get("auth_index") or ""),
+                plan=str(entry.get("plan") or ""),
+                status=str(entry.get("status") or "unknown"),
+                error=str(entry.get("error") or ""),
                 windows=[
                     QuotaWindow(
-                        id=window.id,
-                        label=window.label,
-                        used_percent=window.used_percent,
-                        remaining_percent=window.remaining_percent,
-                        remaining=window.remaining,
-                        limit=window.limit,
-                        reset_label=window.reset_label,
-                        reset_at=window.reset_at,
+                        id=str(window.get("id") or ""),
+                        label=str(window.get("label") or ""),
+                        used_percent=window.get("used_percent"),
+                        remaining_percent=window.get("remaining_percent"),
+                        remaining=window.get("remaining"),
+                        limit=window.get("limit"),
+                        reset_label=str(window.get("reset_label") or "-"),
+                        reset_at=window.get("reset_at"),
                     )
-                    for window in item.windows
+                    for window in windows
+                    if isinstance(window, dict)
                 ],
-                disabled=item.disabled,
-                cooling=item.cooling,
-                client_name=item.client_name or result.client_name,
-                subscription_expires_at=item.subscription_expires_at,
-                subscription_expires_label=item.subscription_expires_label,
-                reset_credits=item.reset_credits,
+                disabled=bool(entry.get("disabled")),
+                cooling=bool(entry.get("cooling")),
+                instance=str(entry.get("instance") or entry.get("client_name") or default_instance),
+                subscription_expires_at=entry.get("subscription_expires_at"),
+                subscription_expires_label=str(entry.get("subscription_expires_label") or ""),
+                reset_credits=entry.get("reset_credits"),
             )
         )
     return accounts
 
 
-async def refresh_codex_quota(file: dict[str, Any]) -> str:
+async def refresh_codex_quota(file: dict[str, Any], instance: str) -> str:
     if platform_of(file) != "codex":
         raise CPAError("只有 Codex 账号可以手动重置额度。")
     auth_index = str(file.get("auth_index") or "")
     if not auth_index:
         raise CPAError("该凭证没有 auth_index，无法刷新 Codex 额度。")
-    cfg = state.get_snapshot().cpa
-    client = get_client()
+    cfg = state.get_snapshot().cpa.get(instance)
+    if cfg is None:
+        raise CPAError(f"没有名为「{instance}」的 CPA 实例。")
+    client = get_client(instance)
     headers = _codex_headers(file)
     credits = await _codex_upstream(client, cfg, auth_index, "GET", CODEX_RESET_CREDITS_URL, headers)
     credit = pick_codex_reset_credit(credits)
@@ -225,7 +247,7 @@ async def refresh_codex_quota(file: dict[str, Any]) -> str:
     result = await _codex_upstream(
         client, cfg, auth_index, "POST", CODEX_RESET_CONSUME_URL, headers, data=body
     )
-    clear_quota_cache()
+    clear_quota_cache(instance)
     return format_codex_refresh_result(file, credit, result)
 
 
@@ -289,7 +311,7 @@ def _codex_headers(file: dict[str, Any]) -> dict[str, str]:
 
 async def _codex_upstream(
     client: ManagementClient,
-    cfg: CpaConfig,
+    cfg: CpaInstance,
     auth_index: str,
     method: str,
     url: str,
@@ -569,7 +591,7 @@ def format_account_quota(account: AccountQuota) -> str:
 
 async def _one_account(
     client: ManagementClient,
-    cfg: CpaConfig,
+    cfg: CpaInstance,
     file: dict[str, Any],
     sem: asyncio.Semaphore,
 ) -> AccountQuota:
@@ -610,7 +632,7 @@ async def _one_account(
     return report
 
 
-async def _fill_claude(client: ManagementClient, cfg: CpaConfig, report: AccountQuota) -> None:
+async def _fill_claude(client: ManagementClient, cfg: CpaInstance, report: AccountQuota) -> None:
     payload = await _upstream_json(
         client,
         cfg,
@@ -652,7 +674,7 @@ def _codex_account_id(file: dict[str, Any]) -> str:
 
 async def _fill_codex(
     client: ManagementClient,
-    cfg: CpaConfig,
+    cfg: CpaInstance,
     file: dict[str, Any],
     report: AccountQuota,
 ) -> None:
@@ -707,7 +729,7 @@ async def _fill_codex(
         report.error = saved_error
 
 
-async def _fill_kimi(client: ManagementClient, cfg: CpaConfig, report: AccountQuota) -> None:
+async def _fill_kimi(client: ManagementClient, cfg: CpaInstance, report: AccountQuota) -> None:
     payload = await _upstream_json(
         client,
         cfg,
@@ -728,7 +750,7 @@ async def _fill_kimi(client: ManagementClient, cfg: CpaConfig, report: AccountQu
             report.subscription_expires_label = exp_label
 
 
-async def _fill_xai(client: ManagementClient, cfg: CpaConfig, report: AccountQuota) -> None:
+async def _fill_xai(client: ManagementClient, cfg: CpaInstance, report: AccountQuota) -> None:
     payload = await _upstream_json(
         client,
         cfg,
@@ -750,7 +772,7 @@ async def _fill_xai(client: ManagementClient, cfg: CpaConfig, report: AccountQuo
     # Note: Requirement 3: Do NOT treat xAI billingPeriodEnd as subscription expiry.
 
 
-async def _fill_antigravity(client: ManagementClient, cfg: CpaConfig, report: AccountQuota) -> None:
+async def _fill_antigravity(client: ManagementClient, cfg: CpaInstance, report: AccountQuota) -> None:
     headers = {
         "Authorization": "Bearer $TOKEN$",
         "Content-Type": "application/json",
@@ -776,7 +798,7 @@ async def _fill_antigravity(client: ManagementClient, cfg: CpaConfig, report: Ac
             report.subscription_expires_label = exp_label
 
 
-async def _fill_gemini(client: ManagementClient, cfg: CpaConfig, report: AccountQuota) -> None:
+async def _fill_gemini(client: ManagementClient, cfg: CpaInstance, report: AccountQuota) -> None:
     payload = await _upstream_json(
         client,
         cfg,
@@ -1121,7 +1143,7 @@ def _sanitize_plan(value: Any) -> str:
     return named or text
 
 
-async def _antigravity_plan(client: ManagementClient, cfg: CpaConfig, report: AccountQuota) -> str:
+async def _antigravity_plan(client: ManagementClient, cfg: CpaInstance, report: AccountQuota) -> str:
     headers = {
         "Authorization": "Bearer $TOKEN$",
         "Content-Type": "application/json",
@@ -1168,7 +1190,7 @@ def _antigravity_window(group_name: str, bucket_name: str) -> tuple[str, str]:
 
 async def _upstream_json(
     client: ManagementClient,
-    cfg: CpaConfig,
+    cfg: CpaInstance,
     report: AccountQuota,
     method: str,
     url: str,
@@ -1399,8 +1421,8 @@ def _wanted_files(
     return wanted
 
 
-def _cache_id(files: list[dict[str, Any]], platform: str | None) -> str:
-    return f"{platform or '*'}:{len(files)}:{_file_stamp(files)}"
+def _cache_id(files: list[dict[str, Any]], platform: str | None, instance: str) -> str:
+    return f"{instance}:{platform or '*'}:{len(files)}:{_file_stamp(files)}"
 
 
 def _parse_body(body: Any) -> dict[str, Any] | None:

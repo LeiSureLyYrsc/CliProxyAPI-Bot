@@ -38,17 +38,18 @@ class PendingLogin:
     state: str
     provider: str
     bot: Bot
-    target: Target
+    instance: str = ""
+    target: Target = field(default_factory=lambda: Target("", ""))
     task: asyncio.Task[None] | None = field(default=None)
 
 
 _pending: dict[str, PendingLogin] = {}
 
 
-async def discover_auth_urls() -> dict[str, str]:
+async def discover_auth_urls(instance: str) -> dict[str, str]:
     mapping = dict(BUILTIN_AUTH_URLS)
     try:
-        plugins = await get_client().list_plugins()
+        plugins = await get_client(instance).list_plugins()
     except CPAError:
         return mapping
     for plugin in plugins:
@@ -61,9 +62,9 @@ async def discover_auth_urls() -> dict[str, str]:
     return mapping
 
 
-async def resolve_auth_path(provider: str) -> tuple[str, str]:
+async def resolve_auth_path(instance: str, provider: str) -> tuple[str, str]:
     alias = provider.strip().lower()
-    mapping = await discover_auth_urls()
+    mapping = await discover_auth_urls(instance)
     path = mapping.get(alias)
     if not path:
         known = ", ".join(sorted(set(mapping)))
@@ -97,7 +98,7 @@ async def send_secret(bot: Bot, event: Event, text: str) -> Target:
     return private
 
 
-async def start_login(bot: Bot, event: Event, provider: str, payload: dict[str, Any]) -> Target:
+async def start_login(bot: Bot, event: Event, instance: str, provider: str, payload: dict[str, Any]) -> Target:
     status = str(payload.get("status") or "ok").lower()
     if status not in {"ok", "success"}:
         raise CPAError(str(payload.get("error") or f"登录启动失败：{status}"))
@@ -111,7 +112,7 @@ async def start_login(bot: Bot, event: Event, provider: str, payload: dict[str, 
     await cancel_local(key, notify=False)
 
     target = await send_secret(bot, event, _login_text(provider, payload))
-    pending = PendingLogin(key=key, state=state, provider=provider, bot=bot, target=target)
+    pending = PendingLogin(key=key, state=state, provider=provider, bot=bot, instance=instance, target=target)
     pending.task = asyncio.create_task(_poll(pending), name=f"cpa-oauth-{key}")
     _pending[key] = pending
     return target
@@ -141,11 +142,13 @@ async def submit_callback(bot: Bot, event: Event, text: str) -> str:
         raise CPAError("没有从消息里解析到回调链接。请发送浏览器地址栏的完整 URL。")
     logger.info("CPA oauth callback received for [{}] (url redacted)", pending.provider)
     try:
-        await get_client().oauth_callback(redirect_url=url, provider=pending.provider, state=pending.state)
+        await get_client(pending.instance).oauth_callback(
+            redirect_url=url, provider=pending.provider, state=pending.state
+        )
     except CPAError as exc:
         raise CPAError(f"提交回调失败：{exc}") from exc
     try:
-        status = await get_client().auth_status(pending.state)
+        status = await get_client(pending.instance).auth_status(pending.state)
     except CPAError as exc:
         return f"回调已提交，但查询登录状态失败：{exc}"
     state = str(status.get("status") or "")
@@ -189,12 +192,17 @@ def _login_text(provider: str, payload: dict[str, Any]) -> str:
 
 
 async def _poll(pending: PendingLogin) -> None:
-    cfg = state.get_snapshot().cpa
-    interval = max(1.0, cfg.oauth_poll_interval)
-    timeout = max(interval, cfg.oauth_timeout)
+    instance_cfg = state.get_snapshot().cpa.get(pending.instance)
+    interval = max(1.0, instance_cfg.oauth_poll_interval if instance_cfg else 3.0)
+    timeout = max(interval, instance_cfg.oauth_timeout if instance_cfg else 1800.0)
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
-    client = get_client()
+    try:
+        client = get_client(pending.instance)
+    except CPAError:
+        await _notify(pending, f"[{pending.provider}] 实例「{pending.instance}」已不存在，登录已中止。")
+        _pending.pop(pending.key, None)
+        return
     try:
         while loop.time() < deadline:
             await asyncio.sleep(interval)
@@ -203,10 +211,10 @@ async def _poll(pending: PendingLogin) -> None:
             except CPAError as exc:
                 await _notify(pending, f"[{pending.provider}] 轮询登录状态失败：{exc}")
                 return
-            state = str(status.get("status") or "")
-            if state == "wait":
+            status_text = str(status.get("status") or "")
+            if status_text == "wait":
                 continue
-            if state == "ok":
+            if status_text == "ok":
                 await _notify(pending, f"[{pending.provider}] 登录成功，凭证已写入 CPA。")
                 return
             error = status.get("error") or "未知错误"

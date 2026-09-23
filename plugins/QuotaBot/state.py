@@ -5,7 +5,7 @@
 - 解析失败**保留上一份好快照**（fail-soft），错误可通过 ``last_error()`` 查询。
 - 重载后按固定顺序失效下游缓存：别名 → 主题注册表 → 额度缓存。
 
-本模块属根模块，只允许依赖 ``config``/``protocol``；对子包（cpa/render）的调用
+本模块属根模块，只允许依赖 ``config``；对子包（cpa/render）的调用
 一律用函数内延迟 import，以避免模块级循环依赖。
 """
 
@@ -182,9 +182,12 @@ def _load(*, force: bool, generate: bool) -> bool:
     return True
 
 
-def _cpa_connection_slice(snapshot: ConfigSnapshot) -> tuple[Any, Any, Any]:
-    cpa = snapshot.cpa
-    return (cpa.base_url, cpa.management_key, cpa.timeout)
+def _cpa_connection_slice(snapshot: ConfigSnapshot) -> tuple[tuple[str, str, str, float], ...]:
+    """实例连接相关字段的指纹。实例增删或连接变化都需要重建 HTTP 客户端。"""
+    return tuple(
+        (instance.name, instance.base_url, instance.management_key, instance.timeout)
+        for instance in snapshot.cpa.instances
+    )
 
 
 def _invalidate(snapshot: ConfigSnapshot, previous: ConfigSnapshot | None = None) -> None:
@@ -215,7 +218,7 @@ def _invalidate(snapshot: ConfigSnapshot, previous: ConfigSnapshot | None = None
     except Exception as exc:
         logger.warning(f"配置重载后清除额度缓存失败：{exc}")
     # 仅当连接相关配置（base_url/management_key/timeout）变化时才重建 HTTP 客户端，
-    # 避免主题等无关修改清掉 401/403 的 IP 封禁冷却。
+    # 避免主题等无关修改无谓地重建连接池。
     connection_changed = previous is None or _cpa_connection_slice(previous) != _cpa_connection_slice(snapshot)
     if connection_changed:
         try:

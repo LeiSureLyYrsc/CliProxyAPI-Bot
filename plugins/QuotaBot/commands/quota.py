@@ -1,41 +1,40 @@
-"""/quota 根命令：额度查询 + 别名 / 主题 / 卡片 / 配置子命令。
+"""/quota 根命令：额度查询 + 别名 / 主题 / 卡片 / 配置 / 火山实例 子命令。
 
 根前缀固定为 `/`（用户要求“quota 必须使用指令头”），裸 `quota` 不匹配。
-查询主体（平台 / 客户端 / 账号 / --fresh 等）由 ``query.parse_quota_command``
-从 plaintext 解析，因此根上不再声明 --fresh/--text/--all/--client 等 Option，
+查询主体（平台 / 实例 / 账号 / --fresh 等）由 ``query.parse_quota_command``
+从 plaintext 解析，因此根上不再声明 --fresh/--text/--instance 等 Option，
 避免 `$main` 因 components 非空而不触发。
+
+多实例：默认查询全部 CPA 实例并按实例名加前缀展示；``--instance <名>``
+或位置参数里的实例名可限定到单个实例。
 """
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from arclet.alconna import Alconna, Args, CommandMeta, MultiVar, Option, Subcommand, store_true
 from nonebot.adapters import Bot, Event
 from nonebot_plugin_alconna import Arparma, Image, Query, UniMessage, on_alconna
 
 from .. import state
-from ..config import CpaConfig, ServerConfig, VolcengineAccount
+from ..config import CpaConfig, ConfigError, normalize_name, valid_name, VolcengineAccount
 from ..cpa.client import CPAError, get_client
 from ..cpa.format import format_ambiguous, format_quota_list, is_cooling, match_auth
 from ..cpa.quota import (
     PLATFORM_TITLES,
     QuotaBoard,
-    accounts_from_result,
-    board_from_accounts,
     clear_quota_cache,
     collect_quotas,
     format_quota_board,
     peek_quota_cache,
     platform_of,
-    stamp_client,
 )
-from ..hub import HubError, get_hub
 from ..query import QuotaSelection, parse_quota_command
 from ..render.html import RenderError, render_board_images
 from ..volcengine.provider import collect_board as collect_volcengine_board
 
-from .common import CPA_ADMIN, _require_one, _text
+from .common import CPA_ADMIN, _require_one_across, _text
 
 # --------------------------------------------------------------------------- #
 # 子命令 Alconna 结构（别名/主题/卡片/配置在各自模块里挂 handler）
@@ -78,11 +77,28 @@ quota = on_alconna(
             Subcommand("reload", help_text="强制重载配置"),
             help_text="配置查看与重载",
         ),
+        Subcommand(
+            "volc",
+            Subcommand("list", help_text="列出火山方舟账号"),
+            Subcommand(
+                "add",
+                Args["name", str]["ak", str]["sk", str]["region?", str],
+                help_text="新增火山方舟账号：/quota volc add <名称> <AK> <SK> [region]",
+            ),
+            Subcommand(
+                "remove|rm|delete",
+                Args["name", str],
+                Option("--yes|-y", action=store_true, dest="yes", help_text="确认删除"),
+                dest="remove",
+                help_text="删除火山方舟账号",
+            ),
+            help_text="火山方舟账号管理",
+        ),
         Args["a?", str]["b?", str]["tail", MultiVar(str, "*")],
         meta=CommandMeta(
             description="额度查询（仅管理员）",
             usage="发送 /quota 查看帮助；/quota 火山 查火山方舟",
-            example="/quota\n/quota 火山\n/quota claude\n/quota claude Home\n/quota --fresh\n/quota cooling\n/quota reset user@example.com\n/quota alias set antigravity user@example.com AG-1\n/quota theme\n/quota theme set md3\n/quota card row 4\n/quota config show",
+            example="/quota\n/quota 火山\n/quota claude\n/quota claude Home\n/quota --fresh\n/quota cooling\n/quota reset user@example.com\n/quota alias set antigravity user@example.com AG-1\n/quota volc add 火山主号 AK SK\n/quota config show",
         ),
     ),
     permission=CPA_ADMIN,
@@ -120,29 +136,33 @@ def _quota_help_text() -> str:
             "QuotaBot 额度查询（仅超级用户 / admins）",
             "命令固定带 / 前缀（指令头）。",
             "",
-            "【查询】",
+            "【查询】默认查询全部 CPA 实例，多实例时按 [实例名] 前缀区分。",
             "  /quota",
-            "    本机客户端全平台额度汇总。",
+            "    全部 CPA 实例全平台额度汇总。",
             "  /quota <平台>",
             "    claude / codex(gpt, openai) / antigravity(反重力) / kimi / xai / 火山(volcengine, ark)",
-            "  /quota <客户端>",
-            "    查询指定在线客户端。例：/quota Home",
-            "  /quota <平台> <客户端>",
+            "  /quota <实例>",
+            "    只查指定 CPA 实例。例：/quota Home",
+            "  /quota <平台> <实例>",
             "    例：/quota antigravity Home  或  /quota Home antigravity",
             "  /quota <查询词>",
-            "    单个账号的额度卡。",
+            "    单个账号的额度卡（跨全部实例搜索）。",
+            "  /quota --instance <实例>   显式指定实例，避免与渠道名冲突",
             "  /quota --fresh     忽略缓存，强制重查上游",
             "  /quota --text      只发文字总览（排障 / 无浏览器）",
-            "  /quota --all       分别查询本机与所有在线客户端",
-            "  /quota --client <客户端>   显式指定客户端，避免与平台名冲突",
-            "  /quota cooling     只看本机冷却中的凭证",
-            "  /quota reset <查询词>   清除配额/冷却并恢复路由（远程客户端不可用）",
+            "  /quota cooling     只看冷却中的凭证（全部实例）",
+            "  /quota reset <查询词>   清除配额/冷却并恢复路由（跨实例搜索）",
             "",
             "【别名】分渠道存储（data/quota_aliases.json）。",
             "  /quota alias list [--disabled]",
             "  /quota alias set <渠道> <查询词> <别名>",
             "    例：/quota alias set antigravity user@example.com AG-1",
             "  /quota alias del <查询词>    删除（跨渠道全部删除）",
+            "",
+            "【火山方舟】本地渠道，凭据存 data/quotabot_config.json 的 volcengine.accounts。",
+            "  /quota volc list",
+            "  /quota volc add <名称> <AK> <SK> [region]",
+            "  /quota volc remove <名称> --yes",
             "",
             "【主题与排版】修改后立刻生效并持久化。",
             "  /quota theme           查看当前主题与可选主题",
@@ -154,7 +174,7 @@ def _quota_help_text() -> str:
             "  /quota config show     查看生效配置（密钥脱敏）与最近解析错误",
             "  /quota config reload   强制从磁盘重载配置",
             "",
-            "【管理】CPA 凭证 / 登录 / Codex 重置请用 /cpa。",
+            "【管理】CPA 实例 / 凭证 / 登录 / Codex 重置请用 /cpa。",
         ]
     )
 
@@ -166,24 +186,37 @@ def _quota_help_text() -> str:
 
 @quota.assign("cooling")
 async def quota_cooling() -> None:
-    try:
-        files = await get_client().list_auth_files()
-    except CPAError as exc:
-        await UniMessage(str(exc)).finish()
-    await UniMessage(format_quota_list([item for item in files if is_cooling(item)])).finish()
+    names = state.get_snapshot().cpa.names()
+    if not names:
+        await UniMessage("没有配置 CPA 实例。新增：/cpa instance add <名称> <base_url>").finish()
+        return
+    lines: list[str] = []
+    for name in names:
+        try:
+            files = await get_client(name).list_auth_files()
+        except CPAError as exc:
+            lines.append(f"[{name}] {exc}")
+            continue
+        cooling = [item for item in files if is_cooling(item)]
+        if cooling:
+            lines.append(f"[{name}]")
+            lines.append(format_quota_list(cooling))
+    await UniMessage("\n".join(lines) if lines else "当前没有冷却中的凭证。").finish()
 
 
 @quota.assign("reset")
 async def quota_reset(query: Query[str] = Query("reset.query")) -> None:
-    file = await _require_one(_text(query))
+    instance, file = await _require_one_across(_text(query))
     auth_index = str(file.get("auth_index") or "")
     if not auth_index:
         await UniMessage("该凭证没有 auth_index，无法 reset-quota。").finish()
+        return
     try:
-        result = await get_client().reset_quota(auth_index)
+        result = await get_client(instance).reset_quota(auth_index)
     except CPAError as exc:
         await UniMessage(str(exc)).finish()
-    await UniMessage(_format_reset_result(result, file)).finish()
+        return
+    await UniMessage(f"[{instance}] " + _format_reset_result(result, file)).finish()
 
 
 def _format_reset_result(data: Any, file: dict[str, Any]) -> str:
@@ -199,61 +232,149 @@ def _format_reset_result(data: Any, file: dict[str, Any]) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# 火山方舟账号管理
+# --------------------------------------------------------------------------- #
+
+
+def _volcengine_raw() -> list[dict[str, Any]]:
+    raw = state.get_snapshot().raw
+    volc = raw.get("volcengine") if isinstance(raw, Mapping) else None
+    accounts = volc.get("accounts") if isinstance(volc, Mapping) else None
+    if not isinstance(accounts, list):
+        return []
+    return [dict(item) for item in accounts if isinstance(item, Mapping)]
+
+
+def _write_volcengine(accounts: list[dict[str, Any]]) -> None:
+    state.update_config({"volcengine": {"accounts": accounts}})
+
+
+@quota.assign("volc.list")
+async def volc_list() -> None:
+    from ..cpa.format import mask_secret
+
+    accounts = state.get_snapshot().volcengine.accounts
+    if not accounts:
+        await UniMessage("还没有配置火山方舟账号。新增：/quota volc add <名称> <AK> <SK> [region]").finish()
+        return
+    lines = ["【火山方舟账号】"]
+    for account in accounts:
+        lines.append(f"  {account.name}  AK={mask_secret(account.access_key_id)}  region={account.region}")
+    await UniMessage("\n".join(lines)).finish()
+
+
+@quota.assign("volc.add")
+async def volc_add(
+    name: Query[str] = Query("volc.add.name"),
+    ak: Query[str] = Query("volc.add.ak"),
+    sk: Query[str] = Query("volc.add.sk"),
+    region: Query[str] = Query("volc.add.region"),
+) -> None:
+    account_name = normalize_name(_text(name))
+    if not valid_name(account_name):
+        await UniMessage(f"账号名称非法：{_text(name)}（1–32 字符，不能含空白或 / \\）").finish()
+        return
+    ak_text = _text(ak)
+    sk_text = _text(sk)
+    if not ak_text or not sk_text:
+        await UniMessage("AK / SK 不能为空。").finish()
+        return
+    accounts = _volcengine_raw()
+    if any(normalize_name(str(item.get("name") or "")) == account_name for item in accounts):
+        await UniMessage(f"火山账号「{account_name}」已存在。查看：/quota volc list").finish()
+        return
+    entry: dict[str, Any] = {
+        "name": account_name,
+        "access_key_id": ak_text,
+        "secret_access_key": sk_text,
+    }
+    if region.available and _text(region):
+        entry["region"] = _text(region)
+    accounts.append(entry)
+    try:
+        _write_volcengine(accounts)
+    except ConfigError as exc:
+        await UniMessage(f"写入配置失败：{exc}").finish()
+        return
+    await UniMessage(f"已新增火山账号「{account_name}」。查看：/quota volc list").finish()
+
+
+@quota.assign("volc.remove")
+async def volc_remove(
+    arp: Arparma,
+    name: Query[str] = Query("volc.remove.name"),
+) -> None:
+    account_name = normalize_name(_text(name))
+    accounts = _volcengine_raw()
+    remaining = [item for item in accounts if normalize_name(str(item.get("name") or "")) != account_name]
+    if len(remaining) == len(accounts):
+        await UniMessage(f"没有名为「{account_name}」的火山账号。查看：/quota volc list").finish()
+        return
+    if not arp.find("volc.remove.yes"):
+        await UniMessage(f"即将删除火山账号「{account_name}」。确认请发送：\n/quota volc remove {account_name} --yes").finish()
+        return
+    try:
+        _write_volcengine(remaining)
+    except ConfigError as exc:
+        await UniMessage(f"写入配置失败：{exc}").finish()
+        return
+    await UniMessage(f"已删除火山账号「{account_name}」。").finish()
+
+
+# --------------------------------------------------------------------------- #
 # 查询主体
 # --------------------------------------------------------------------------- #
 
 
 async def quota_view(event: Event) -> None:
     snapshot = state.get_snapshot()
-    server = snapshot.server
-    hub = get_hub()
-    known = hub.known_names(server)
     selection = parse_quota_command(
         event.get_plaintext(),
-        known_clients=known,
-        default_client=server.client_name,
+        known_instances=set(snapshot.cpa.names()),
     )
     if selection.error:
         await UniMessage(selection.error).finish()
-    # 火山方舟：本地渠道，凭据来自 volcengine.accounts，不向远程客户端扩散。
+    # 火山方舟：本地渠道，凭据来自 volcengine.accounts。
     if selection.platform == "volcengine":
-        await _send_volcengine_results(server, snapshot.cpa, selection)
+        await _send_volcengine_results(snapshot.cpa, selection)
         return
-    names = _quota_targets(server, selection)
-    if not names:
-        await UniMessage("没有可查询的客户端。").finish()
+    targets = _quota_targets(selection)
+    if targets is None:
+        return
+    if not targets:
+        await UniMessage("没有可查询的 CPA 实例。新增：/cpa instance add <名称> <base_url>").finish()
+        return
     await UniMessage("正在按平台查询上游额度，可能需要几秒…").send()
     results: list[tuple[str, QuotaBoard | str]] = []
-    for name in names:
+    for name in targets:
         try:
-            if name == server.client_name:
-                board = await _local_quota_board(selection)
-            else:
-                board = await _remote_quota_board(name, selection)
+            board = await _instance_quota_board(name, selection)
             results.append((name, board))
-        except (CPAError, HubError) as exc:
+        except CPAError as exc:
             results.append((name, str(exc)))
-    await _send_quota_results(server, snapshot.cpa, results, want_text=selection.text, multi=len(names) > 1)
+    await _send_quota_results(snapshot.cpa, results, want_text=selection.text, multi=len(targets) > 1)
 
 
-async def _send_volcengine_results(server: ServerConfig, cpa: CpaConfig, selection: QuotaSelection) -> None:
+async def _send_volcengine_results(cpa: CpaConfig, selection: QuotaSelection) -> None:
     accounts = list(state.get_snapshot().volcengine.accounts)
     if selection.account:
         accounts = _filter_volcengine_accounts(accounts, selection.account)
         if not accounts:
             await UniMessage(f"没有找到火山账号：{selection.account}").finish()
+            return
     if not accounts:
         await UniMessage(
-            "未配置火山方舟账号。请在 data/quotabot_config.json 的 volcengine.accounts 里添加 "
-            "{name, access_key_id, secret_access_key, region}。"
+            "未配置火山方舟账号。用 /quota volc add <名称> <AK> <SK> [region] 添加，"
+            "或编辑 data/quotabot_config.json 的 volcengine.accounts。"
         ).finish()
+        return
     await UniMessage("正在查询火山方舟 Coding Plan 额度…").send()
     try:
         board = await collect_volcengine_board(accounts)
     except Exception as exc:  # noqa: BLE001 - 兜底，避免单渠道异常打断消息处理
         await UniMessage(f"火山额度查询失败：{exc}").finish()
         return
-    await _send_quota_results(server, cpa, [(server.client_name, board)], want_text=selection.text, multi=False)
+    await _send_quota_results(cpa, [("火山", board)], want_text=selection.text, multi=False)
 
 
 def _filter_volcengine_accounts(accounts: Sequence[VolcengineAccount], query: str) -> list[VolcengineAccount]:
@@ -271,68 +392,58 @@ def _filter_volcengine_accounts(accounts: Sequence[VolcengineAccount], query: st
     return matched
 
 
-def _quota_targets(server: ServerConfig, selection: QuotaSelection) -> list[str]:
-    local = server.client_name
-    if selection.all_clients:
-        names = [local]
-        for name in get_hub().online_names():
-            if name != local:
-                names.append(name)
-        return names
-    return [selection.client_name or local]
+def _quota_targets(selection: QuotaSelection) -> list[str] | None:
+    """返回要查询的实例名列表；``None`` 表示已发送错误消息、调用方应直接返回。"""
+    if selection.instance:
+        if selection.instance not in set(state.get_snapshot().cpa.names()):
+            # 已在解析层校验过格式，这里只剩“不存在”一种情况。
+            return [selection.instance]
+        return [selection.instance]
+    return list(state.get_snapshot().cpa.names())
 
 
-async def _local_quota_board(selection: QuotaSelection) -> QuotaBoard:
-    files = await get_client().list_auth_files()
+async def _instance_quota_board(instance: str, selection: QuotaSelection) -> QuotaBoard:
+    files = await get_client(instance).list_auth_files()
     platform = selection.platform
     target = files
     single = False
     if selection.account:
         matched = match_auth(files, selection.account)
         if not matched:
-            raise CPAError(f"没有找到凭证：{selection.account}")
+            raise CPAError(f"[{instance}] 没有找到凭证：{selection.account}")
         if len(matched) > 1:
-            raise CPAError(format_ambiguous(selection.account, matched))
+            raise CPAError(f"[{instance}] " + format_ambiguous(selection.account, matched))
         target = matched
         single = True
     elif platform:
         target = [item for item in files if platform_of(item) == platform]
         if not target:
-            raise CPAError(f"没有 {platform} 平台的凭证。")
+            raise CPAError(f"[{instance}] 没有 {platform} 平台的凭证。")
     force = selection.fresh
     skip_disabled = not single
-    board = None if force else peek_quota_cache(target, platform=platform, skip_disabled=skip_disabled)
+    board = None if force else peek_quota_cache(target, instance=instance, platform=platform, skip_disabled=skip_disabled)
     if board is None:
-        board = await collect_quotas(target, platform=platform, force=force, skip_disabled=skip_disabled)
-    return stamp_client(board, state.get_snapshot().server.client_name)
-
-
-async def _remote_quota_board(name: str, selection: QuotaSelection) -> QuotaBoard:
-    result = await get_hub().query_quota(
-        name,
-        platform=selection.platform,
-        account=selection.account,
-        fresh=selection.fresh,
-    )
-    return board_from_accounts(accounts_from_result(result), cached=result.cached)
+        board = await collect_quotas(
+            target, instance=instance, platform=platform, force=force, skip_disabled=skip_disabled
+        )
+    return board
 
 
 async def _send_quota_results(
-    server: ServerConfig,
     cpa: CpaConfig,
     results: list[tuple[str, QuotaBoard | str]],
     *,
     want_text: bool,
     multi: bool,
 ) -> None:
-    prefix = multi or server.enabled
+    prefix = multi
     outgoing: list[tuple[str, bytes | None]] = []
     for name, item in results:
         if isinstance(item, str):
             outgoing.append((f"[{name}] {item}" if prefix else item, None))
             continue
         label = f"[{name}] " if prefix else ""
-        if want_text or not cpa.quota_image:
+        if want_text or not cpa_uses_image(cpa, name):
             chunks = format_quota_board(item)
             outgoing.extend((f"{label}{chunk}" if label else chunk, None) for chunk in chunks)
             continue
@@ -366,3 +477,9 @@ async def _send_quota_results(
         return
     await UniMessage(caption).send()
     await UniMessage(Image(raw=png, mimetype="image/png")).finish()
+
+
+def cpa_uses_image(cpa: CpaConfig, instance: str) -> bool:
+    """该实例是否启用图片渲染（未找到时回退全局默认 True）。"""
+    found = cpa.get(instance)
+    return found.quota_image if found is not None else True

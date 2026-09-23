@@ -1,7 +1,11 @@
 """QuotaBot 的 JSON 配置：定义、校验与原子写入。
 
 NoneBot 的 `.env` 只保留 ``QUOTABOT_CONFIG_FILE``（指向本文件）；插件其余配置
-（CPA 连接、火山账号、渲染设置、Server 模式、别名文件路径）都从该 JSON 读取。
+（CPA 实例、火山账号、渲染设置、别名文件路径）都从该 JSON 读取。
+
+CPA 支持多个实例：``cpa.instances[]`` 中每一项都是一个独立连接，自带连接与
+额度查询设置。``cpa.admins`` / ``cpa.codex_refresh_admin`` 是全局权限名单，
+不随实例区分。
 
 本模块只做“纯数据”工作：解析、校验、默认值、原子写入。热重载与快照管理在
 ``state.py``。
@@ -11,6 +15,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import unicodedata
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -18,7 +24,7 @@ from typing import Any, Mapping
 
 from pydantic import BaseModel, Field, field_validator
 
-from .protocol import normalize_client_name, valid_client_name
+from .model import is_channel_name
 
 DEFAULT_CONFIG_FILE = "data/quotabot_config.json"
 DEFAULT_ALIASES_FILE = "data/quota_aliases.json"
@@ -29,9 +35,9 @@ MIN_CARDS_PER_ROW = 1
 MAX_CARDS_PER_ROW = 6
 
 DEFAULT_CPA_BASE_URL = "http://127.0.0.1:8317"
-DEFAULT_CLIENT_NAME = "Server"
-DEFAULT_SERVER_HOST = "127.0.0.1"
-DEFAULT_SERVER_PORT = 8320
+
+#: 实例名 / 渠道账号名的通用长度上限。
+MAX_NAME_LEN = 32
 
 
 class ConfigError(ValueError):
@@ -39,6 +45,33 @@ class ConfigError(ValueError):
 
     继承 ``ValueError``，便于命令层沿用统一的非法取值处理。
     """
+
+
+# --------------------------------------------------------------------------- #
+# 名称校验（实例名等）
+# --------------------------------------------------------------------------- #
+
+
+def normalize_name(value: str) -> str:
+    """规范化名称：去首尾空白 + Unicode NFC。"""
+    return unicodedata.normalize("NFC", (value or "").strip())
+
+
+def valid_name(value: str) -> bool:
+    """名称是否合法：1–32 字符，不含空白、``/`` ``\\`` ``:``、控制字符，不以 ``-`` 开头。
+
+    ``:`` 被禁用是因为缓存键与跨实例展示都用它作分隔符。
+    """
+    name = normalize_name(value)
+    if not name or len(name) > MAX_NAME_LEN:
+        return False
+    if name.startswith("-"):
+        return False
+    if any(ch in name for ch in "/\\:") or any(ch.isspace() for ch in name):
+        return False
+    if any(unicodedata.category(ch).startswith("C") for ch in name):
+        return False
+    return True
 
 
 class Config(BaseModel):
@@ -116,18 +149,6 @@ def _as_str_list(value: Any) -> tuple[str, ...]:
     return tuple(cleaned)
 
 
-def _as_str_map(value: Any) -> Mapping[str, str]:
-    if not isinstance(value, Mapping):
-        return {}
-    cleaned: dict[str, str] = {}
-    for key, item in value.items():
-        name = _as_str(key)
-        token = _as_str(item)
-        if name and token:
-            cleaned[name] = token
-    return cleaned
-
-
 def _as_mapping(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
 
@@ -142,13 +163,12 @@ def _strip_trailing_slash(value: str) -> str:
 
 
 @dataclass(frozen=True)
-class CpaConfig:
-    """CLIProxyAPI 管理接口连接与额度查询设置。"""
+class CpaInstance:
+    """单个 CLIProxyAPI 实例：独立连接 + 独立额度查询设置。"""
 
+    name: str
     base_url: str = DEFAULT_CPA_BASE_URL
     management_key: str = ""
-    admins: tuple[str, ...] = ()
-    codex_refresh_admin: tuple[str, ...] = ()
     timeout: float = 15.0
     oauth_poll_interval: float = 3.0
     oauth_timeout: float = 1800.0
@@ -156,6 +176,29 @@ class CpaConfig:
     quota_concurrency: int = 4
     quota_cache_ttl: float = 60.0
     quota_image: bool = True
+
+
+@dataclass(frozen=True)
+class CpaConfig:
+    """CPA 全局设置 + 多个实例。
+
+    ``admins`` / ``codex_refresh_admin`` 是全局权限名单；``instances`` 是连接列表。
+    """
+
+    admins: tuple[str, ...] = ()
+    codex_refresh_admin: tuple[str, ...] = ()
+    instances: tuple[CpaInstance, ...] = ()
+
+    def get(self, name: str) -> CpaInstance | None:
+        """按名称取实例（名称已规范化）；不存在返回 None。"""
+        wanted = normalize_name(name)
+        for instance in self.instances:
+            if instance.name == wanted:
+                return instance
+        return None
+
+    def names(self) -> tuple[str, ...]:
+        return tuple(instance.name for instance in self.instances)
 
 
 @dataclass(frozen=True)
@@ -182,44 +225,35 @@ class RenderConfig:
 
 
 @dataclass(frozen=True)
-class ServerConfig:
-    """Server 模式（远程客户端额度聚合）。改动需重启生效。"""
-
-    enabled: bool = False
-    client_name: str = DEFAULT_CLIENT_NAME
-    host: str = DEFAULT_SERVER_HOST
-    port: int = DEFAULT_SERVER_PORT
-    client_keys: Mapping[str, str] = field(default_factory=dict)
-    request_timeout: float = 40.0
-    ws_max_size: int = 1_048_576
-    max_accounts: int = 200
-
-
-@dataclass(frozen=True)
 class ConfigSnapshot:
     """一次性完整配置快照。整体替换，不在原地修改。"""
 
     cpa: CpaConfig = field(default_factory=CpaConfig)
     volcengine: VolcengineConfig = field(default_factory=VolcengineConfig)
     render: RenderConfig = field(default_factory=RenderConfig)
-    server: ServerConfig = field(default_factory=ServerConfig)
     aliases_file: str = DEFAULT_ALIASES_FILE
     raw: Mapping[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "cpa": {
-                "base_url": self.cpa.base_url,
-                "management_key": self.cpa.management_key,
                 "admins": list(self.cpa.admins),
                 "codex_refresh_admin": list(self.cpa.codex_refresh_admin),
-                "timeout": self.cpa.timeout,
-                "oauth_poll_interval": self.cpa.oauth_poll_interval,
-                "oauth_timeout": self.cpa.oauth_timeout,
-                "quota_timeout": self.cpa.quota_timeout,
-                "quota_concurrency": self.cpa.quota_concurrency,
-                "quota_cache_ttl": self.cpa.quota_cache_ttl,
-                "quota_image": self.cpa.quota_image,
+                "instances": [
+                    {
+                        "name": instance.name,
+                        "base_url": instance.base_url,
+                        "management_key": instance.management_key,
+                        "timeout": instance.timeout,
+                        "oauth_poll_interval": instance.oauth_poll_interval,
+                        "oauth_timeout": instance.oauth_timeout,
+                        "quota_timeout": instance.quota_timeout,
+                        "quota_concurrency": instance.quota_concurrency,
+                        "quota_cache_ttl": instance.quota_cache_ttl,
+                        "quota_image": instance.quota_image,
+                    }
+                    for instance in self.cpa.instances
+                ],
             },
             "volcengine": {
                 "accounts": [
@@ -236,16 +270,6 @@ class ConfigSnapshot:
                 "theme": self.render.theme,
                 "cards_per_row": self.render.cards_per_row,
             },
-            "server": {
-                "enabled": self.server.enabled,
-                "client_name": self.server.client_name,
-                "host": self.server.host,
-                "port": self.server.port,
-                "client_keys": dict(self.server.client_keys),
-                "request_timeout": self.server.request_timeout,
-                "ws_max_size": self.server.ws_max_size,
-                "max_accounts": self.server.max_accounts,
-            },
             "aliases_file": self.aliases_file,
         }
 
@@ -255,13 +279,23 @@ def default_config_dict() -> dict[str, Any]:
     return ConfigSnapshot().to_dict()
 
 
-def _parse_cpa(raw: Any) -> CpaConfig:
-    data = _as_mapping(raw)
-    return CpaConfig(
+def _parse_cpa_instance(entry: Any) -> CpaInstance | None:
+    data = _as_mapping(entry)
+    raw_name = _as_str(data.get("name"))
+    name = normalize_name(raw_name)
+    if not name:
+        return None
+    if not valid_name(name):
+        raise ConfigError(f"cpa.instances 中实例名称非法：{raw_name}（1–32 字符，不能含空白或 / \\ :）")
+    if is_channel_name(name):
+        raise ConfigError(
+            f"实例名称不能与渠道名称同名：{raw_name}。"
+            "实例是代理多平台的网关，请换一个名字（如 Home、Office）。"
+        )
+    return CpaInstance(
+        name=name,
         base_url=_strip_trailing_slash(_as_str(data.get("base_url"), DEFAULT_CPA_BASE_URL)) or DEFAULT_CPA_BASE_URL,
         management_key=_as_str(data.get("management_key")),
-        admins=_as_str_list(data.get("admins")),
-        codex_refresh_admin=_as_str_list(data.get("codex_refresh_admin")),
         timeout=max(1.0, _as_float(data.get("timeout"), 15.0)),
         oauth_poll_interval=max(1.0, _as_float(data.get("oauth_poll_interval"), 3.0)),
         oauth_timeout=max(1.0, _as_float(data.get("oauth_timeout"), 1800.0)),
@@ -269,6 +303,27 @@ def _parse_cpa(raw: Any) -> CpaConfig:
         quota_concurrency=max(1, _as_int(data.get("quota_concurrency"), 4)),
         quota_cache_ttl=max(0.0, _as_float(data.get("quota_cache_ttl"), 60.0)),
         quota_image=_as_bool(data.get("quota_image"), True),
+    )
+
+
+def _parse_cpa(raw: Any) -> CpaConfig:
+    data = _as_mapping(raw)
+    raw_instances = data.get("instances")
+    instances: list[CpaInstance] = []
+    seen: set[str] = set()
+    if isinstance(raw_instances, (list, tuple)):
+        for entry in raw_instances:
+            instance = _parse_cpa_instance(entry)
+            if instance is None:
+                continue
+            if instance.name in seen:
+                raise ConfigError(f"cpa.instances 中实例名称重复：{instance.name}")
+            seen.add(instance.name)
+            instances.append(instance)
+    return CpaConfig(
+        admins=_as_str_list(data.get("admins")),
+        codex_refresh_admin=_as_str_list(data.get("codex_refresh_admin")),
+        instances=tuple(instances),
     )
 
 
@@ -303,27 +358,6 @@ def _parse_render(raw: Any) -> RenderConfig:
     return RenderConfig(theme=theme, cards_per_row=cards)
 
 
-def _parse_server(raw: Any) -> ServerConfig:
-    data = _as_mapping(raw)
-    client_name = normalize_client_name(_as_str(data.get("client_name"), DEFAULT_CLIENT_NAME))
-    if not valid_client_name(client_name):
-        raise ConfigError("server.client_name 非法：1–32 字符，不能含空白或 / \\")
-    client_keys = _as_str_map(data.get("client_keys"))
-    for name in client_keys:
-        if not valid_client_name(normalize_client_name(name)):
-            raise ConfigError(f"server.client_keys 中客户端名称非法：{name}")
-    return ServerConfig(
-        enabled=_as_bool(data.get("enabled"), False),
-        client_name=client_name,
-        host=_as_str(data.get("host"), DEFAULT_SERVER_HOST) or DEFAULT_SERVER_HOST,
-        port=max(1, min(65535, _as_int(data.get("port"), DEFAULT_SERVER_PORT))),
-        client_keys=client_keys,
-        request_timeout=max(1.0, _as_float(data.get("request_timeout"), 40.0)),
-        ws_max_size=max(1024, _as_int(data.get("ws_max_size"), 1_048_576)),
-        max_accounts=max(1, _as_int(data.get("max_accounts"), 200)),
-    )
-
-
 def snapshot_from_raw(raw: Mapping[str, Any]) -> ConfigSnapshot:
     """把原始 JSON 字典转换为强类型快照。"""
     if not isinstance(raw, Mapping):
@@ -333,7 +367,6 @@ def snapshot_from_raw(raw: Mapping[str, Any]) -> ConfigSnapshot:
         cpa=_parse_cpa(raw.get("cpa")),
         volcengine=_parse_volcengine(raw.get("volcengine")),
         render=_parse_render(raw.get("render")),
-        server=_parse_server(raw.get("server")),
         aliases_file=aliases_file,
         raw=dict(raw),
     )

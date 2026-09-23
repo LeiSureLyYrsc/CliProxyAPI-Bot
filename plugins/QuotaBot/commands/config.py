@@ -14,31 +14,35 @@ from .quota import quota
 async def quota_config_show() -> None:
     snapshot = state.get_snapshot()
     cpa = snapshot.cpa
-    server = snapshot.server
     lines = [
         "【配置】（密钥已脱敏）",
         f"配置文件：{state.snapshot_path() or '（内存模式）'}",
         f"generation：{state.generation()}",
         "",
         "cpa：",
-        f"  base_url：{cpa.base_url}",
-        f"  management_key：{mask_secret(cpa.management_key) if cpa.management_key else '（未设置）'}",
         f"  admins：{', '.join(cpa.admins) or '（未设置）'}",
-        f"  quota_image：{cpa.quota_image}",
-        f"  quota_timeout：{cpa.quota_timeout}s  concurrency：{cpa.quota_concurrency}  cache_ttl：{cpa.quota_cache_ttl}s",
-        "",
-        "volcengine：",
-        f"  账号：{', '.join(a.name for a in snapshot.volcengine.accounts) or '（未配置）'}",
-        "",
-        "render：",
-        f"  theme：{snapshot.render.theme}  cards_per_row：{snapshot.render.cards_per_row}",
-        "",
-        "server：",
-        f"  enabled：{server.enabled}  client_name：{server.client_name}",
-        f"  host：{server.host}:{server.port}  client_keys：{', '.join(server.client_keys) or '（无）'}",
-        "",
-        f"aliases_file：{snapshot.aliases_file}",
+        f"  codex_refresh_admin：{', '.join(cpa.codex_refresh_admin) or '（未设置）'}",
+        f"  实例数：{len(cpa.instances)}",
     ]
+    for instance in cpa.instances:
+        key = mask_secret(instance.management_key) if instance.management_key else "（未设置）"
+        lines.append(
+            f"    - {instance.name}  {instance.base_url}  key={key}  "
+            f"quota_timeout={instance.quota_timeout}s concurrency={instance.quota_concurrency} "
+            f"cache_ttl={instance.quota_cache_ttl}s image={instance.quota_image}"
+        )
+    lines.extend(
+        [
+            "",
+            "volcengine：",
+            f"  账号：{', '.join(a.name for a in snapshot.volcengine.accounts) or '（未配置）'}",
+            "",
+            "render：",
+            f"  theme：{snapshot.render.theme}  cards_per_row：{snapshot.render.cards_per_row}",
+            "",
+            f"aliases_file：{snapshot.aliases_file}",
+        ]
+    )
     error = state.last_error()
     if error:
         lines.append("")

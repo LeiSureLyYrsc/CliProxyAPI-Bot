@@ -57,7 +57,7 @@ telegram_bots=[{"token": "123456:ABC-DEF"}]
 
 ### QuotaBot 插件
 
-业务配置（CPA 连接、火山凭据、渲染主题、Server 模式、别名文件路径）全部放在 `data/quotabot_config.json`，首次启动自动生成，支持热重载。`.env` 里只有这一项可选覆盖：
+业务配置（CPA 实例、火山凭据、渲染主题、别名文件路径）全部放在 `data/quotabot_config.json`，首次启动自动生成，支持热重载。`.env` 里只有这一项可选覆盖：
 
 ```env
 # QUOTABOT_CONFIG_FILE=data/quotabot_config.json
@@ -68,17 +68,22 @@ telegram_bots=[{"token": "123456:ABC-DEF"}]
 ```jsonc
 {
   "cpa": {
-    "base_url": "http://127.0.0.1:8317",
-    "management_key": "",            // 明文管理密钥
-    "admins": [],                    // 额外管理员 user id
-    "codex_refresh_admin": [],
-    "timeout": 15.0,
-    "oauth_poll_interval": 3.0,
-    "oauth_timeout": 1800.0,
-    "quota_timeout": 25.0,
-    "quota_concurrency": 4,
-    "quota_cache_ttl": 60.0,
-    "quota_image": true
+    "admins": [],                    // 额外管理员 user id（全局）
+    "codex_refresh_admin": [],       // 全局
+    "instances": [                   // 每个实例独立连接与额度设置
+      {
+        "name": "Home",
+        "base_url": "http://127.0.0.1:8317",
+        "management_key": "",        // 明文管理密钥
+        "timeout": 15.0,
+        "oauth_poll_interval": 3.0,
+        "oauth_timeout": 1800.0,
+        "quota_timeout": 25.0,
+        "quota_concurrency": 4,
+        "quota_cache_ttl": 60.0,
+        "quota_image": true
+      }
+    ]
   },
   "volcengine": {
     "accounts": [
@@ -86,23 +91,19 @@ telegram_bots=[{"token": "123456:ABC-DEF"}]
     ]
   },
   "render": { "theme": "default", "cards_per_row": 4 },
-  "server": {
-    "enabled": false, "client_name": "Server", "host": "127.0.0.1", "port": 8320,
-    "client_keys": {}, "request_timeout": 40.0, "ws_max_size": 1048576, "max_accounts": 200
-  },
   "aliases_file": "data/quota_aliases.json"
 }
 ```
 
 | 段 | 说明 |
 | --- | --- |
-| `cpa` | CPA 连接与额度查询设置。`base_url` 可写 `http://host:8317` 或带 `/v0/management` 的完整前缀；`management_key` 为明文密钥 |
+| `cpa.instances[]` | 每个 CLIProxyAPI 实例一项，自带 `base_url` / `management_key` / 超时 / 并发 / 缓存 / 图片开关。`base_url` 可写 `http://host:8317` 或带 `/v0/management` 的完整前缀 |
+| `cpa.admins` / `cpa.codex_refresh_admin` | 全局权限名单（与实例无关） |
 | `volcengine.accounts` | 火山方舟 Coding Plan 查询凭据（控制面 AccessKey，需 `ArkReadOnlyAccess`） |
 | `render` | 额度图主题与每行卡片数（1..6），`/quota theme` `/quota card row` 可改 |
-| `server` | Server 模式（远程客户端额度聚合）；改动需重启 |
 | `aliases_file` | 分渠道别名文件，默认 `data/quota_aliases.json` |
 
-修改配置后**自动热重载**（也可 `/quota config reload` 强制）；`/quota config show` 查看当前生效值。`server.*` 与 `admins` 变更需重启。旧的 `CPA_*` 环境变量与 `data/cpa_aliases.json` / `data/cpa_render_settings.json` 不再生效（启动时会告警，不做自动迁移）。
+修改配置后**自动热重载**（也可 `/quota config reload` 强制）；`/quota config show` 查看当前生效值。旧的 `CPA_*` 环境变量与 `data/cpa_aliases.json` / `data/cpa_render_settings.json` 不再生效（启动时会告警，不做自动迁移）。旧的单实例 `cpa.base_url` 字段不再读取，请改为 `cpa.instances[]`。
 
 Bot 与 CPA 不在同一台机器时，CPA 需要 `remote-management.allow-remote: true`，或设置环境变量 `MANAGEMENT_PASSWORD`（会强制允许远程）。未配置任何管理密钥时，`/v0/management` 会 404。
 
@@ -114,18 +115,20 @@ Bot 与 CPA 不在同一台机器时，CPA 需要 `remote-management.allow-remot
 
 | 命令 | 作用 |
 | --- | --- |
-| `/quota` | 本机客户端全平台额度汇总；无参数时显示帮助 |
+| `/quota` | **全部 CPA 实例**全平台额度汇总；无参数时显示帮助。多实例时按 `[实例名]` 前缀区分 |
 | `/quota <平台>` | 只看一个平台：`claude` / `codex`(gpt, openai) / `antigravity`(反重力) / `kimi` / `xai` |
 | `/quota 火山` | 查询火山方舟 Coding Plan 额度（同义：`volc` / `volcengine` / `ark` / `火山方舟`） |
-| `/quota <客户端>` | 查询指定在线客户端。例：`/quota Home` |
-| `/quota <平台> <客户端>` | 例：`/quota antigravity Home` 或 `/quota Home antigravity` |
-| `/quota <查询词>` | 单个账号的额度卡 |
+| `/quota <实例>` | 只查指定 CPA 实例。例：`/quota Home` |
+| `/quota <平台> <实例>` | 例：`/quota antigravity Home` 或 `/quota Home antigravity` |
+| `/quota <查询词>` | 单个账号的额度卡（跨全部实例搜索） |
 | `/quota --fresh` | 忽略缓存，强制重查 |
 | `/quota --text` | 只发文字总览（排障 / 无浏览器时） |
-| `/quota --all` | 分别查询本机与所有在线客户端 |
-| `/quota --client <客户端>` | 显式指定客户端，避免与平台名冲突 |
-| `/quota cooling` | 只看冷却（本地 CPA 状态，不打上游） |
-| `/quota reset <查询词>` | `POST /reset-quota`（使用完整 `auth_index`） |
+| `/quota --instance <实例>` | 显式指定实例，避免与平台名冲突 |
+| `/quota cooling` | 只看冷却中的凭证（全部实例） |
+| `/quota reset <查询词>` | `POST /reset-quota`（使用完整 `auth_index`，跨实例搜索） |
+| `/quota volc list` | 列出火山方舟账号 |
+| `/quota volc add <名称> <AK> <SK> [region]` | 新增火山方舟账号（写入配置） |
+| `/quota volc remove <名称> --yes` | 删除火山方舟账号 |
 | `/quota alias list [--disabled]` | 列出账号显示别名（分渠道） |
 | `/quota alias set <渠道> <查询词> <别名>` | 为指定渠道账号设置别名 |
 | `/quota alias del <查询词>` | 删除别名（跨渠道全部删除） |
@@ -136,16 +139,22 @@ Bot 与 CPA 不在同一台机器时，CPA 需要 `remote-management.allow-remot
 
 ### CPA 管理 `/cpa`
 
+除登录回调外，所有子命令都要在第一个位置写 CPA 实例名。
+
 | 命令 | 作用 |
 | --- | --- |
-| `cpa status` | 探活：版本头、凭证 ready / 禁用 / 冷却计数。不回传配置正文 |
-| `cpa auth list [provider] [--disabled]` | 凭证摘要。默认隐藏已禁用账号 |
-| `cpa auth show <查询词>` | 单条详情与近期请求桶 |
-| `cpa auth on\|off <查询词>` | 启用 / 禁用（`enable` / `disable` 同义） |
-| `cpa auth models <查询词>` | 该凭证支持的模型 |
-| `cpa auth delete <查询词> --yes` | 删除磁盘凭证；无 `--yes` 只预告 |
-| `cpa codex refresh <查询词> [--client|-c <客户端>]` | 消耗 1 次 Codex 官方重置次数并刷新额度。仅 `cpa.codex_refresh_admin` |
-| `cpa login <渠道>` | 启动 OAuth / 设备码。授权完成后把浏览器回调链接发回聊天 |
+| `cpa instance list` | 列出已配置实例 |
+| `cpa instance add <名称> <base_url> [--key K] [--timeout N] [--quota-timeout N] [--concurrency N] [--cache-ttl N] [--no-image]` | 新增实例（写入配置） |
+| `cpa instance show <名称>` | 查看实例详情（密钥脱敏） |
+| `cpa instance remove <名称> --yes` | 删除实例 |
+| `cpa status <实例>` | 探活：版本头、凭证 ready / 禁用 / 冷却计数。不回传配置正文 |
+| `cpa auth list <实例> [provider] [--disabled]` | 凭证摘要。默认隐藏已禁用账号 |
+| `cpa auth show <实例> <查询词>` | 单条详情与近期请求桶 |
+| `cpa auth on\|off <实例> <查询词>` | 启用 / 禁用（`enable` / `disable` 同义） |
+| `cpa auth models <实例> <查询词>` | 该凭证支持的模型 |
+| `cpa auth delete <实例> <查询词> --yes` | 删除磁盘凭证；无 `--yes` 只预告 |
+| `cpa codex refresh <实例> <查询词>` | 消耗 1 次 Codex 官方重置次数并刷新额度。仅 `cpa.codex_refresh_admin` |
+| `cpa login <实例> <渠道>` | 启动 OAuth / 设备码。授权完成后把浏览器回调链接发回聊天（自动归属该实例） |
 | `cpa login callback <回调链接>` | 手动提交 localhost 回调 URL |
 | `cpa login cancel` | 取消当前登录 |
 
@@ -234,4 +243,4 @@ themes/<主题名>/
 
 ## 鉴权失败
 
-同一 IP 连续 5 次管理密钥错误会被 CPA 封禁约 30 分钟。插件在 401 / 403 后会暂停请求一段时间，避免把 Bot 所在 IP 打进黑名单。
+管理密钥错误时 CPA 会返回 401，插件直接把错误转达给管理员，**不做本地暂停/冷却**：修好 `management_key` 后下一条命令即可生效。若 CPA 与 Bot 不在同一台机器，403 通常表示需要在 CPA 侧开启 `remote-management.allow-remote`（或设置 `MANAGEMENT_PASSWORD`）。

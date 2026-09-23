@@ -1,8 +1,12 @@
-"""/cpa 管理命令：凭证巡检、OAuth 登录、Codex 重置（保留原 cpa 命名空间）。"""
+"""/cpa 管理命令：实例管理、凭证巡检、OAuth 登录、Codex 重置。
+
+多实例模型：几乎所有操作都显式带上实例名（第一个位置参数）。实例的增删改写在
+``data/quotabot_config.json`` 的 ``cpa.instances[]``。
+"""
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Mapping
 
 from arclet.alconna import Alconna, Args, CommandMeta, Option, Subcommand, store_true
 from nonebot.adapters import Bot, Event
@@ -11,7 +15,7 @@ from nonebot.message import event_preprocessor
 from nonebot_plugin_alconna import Arparma, Query, UniMessage, on_alconna
 
 from .. import state
-from ..config import ServerConfig
+from ..config import ConfigError, DEFAULT_CPA_BASE_URL, normalize_name, valid_name
 from ..cpa.client import CPAError, get_client
 from ..cpa.format import (
     display_name,
@@ -20,7 +24,6 @@ from ..cpa.format import (
     format_auth_list,
     format_models,
     format_probe,
-    format_reset_result,
     looks_like_oauth_callback,
     match_auth,
 )
@@ -33,32 +36,62 @@ from ..cpa.oauth import (
     submit_callback,
 )
 from ..cpa.quota import refresh_codex_quota
-from ..hub import HubError, get_hub
-from ..model import normalize_channel
-from ..protocol import normalize_client_name, valid_client_name
 
-from .common import CPA_ADMIN, _can_refresh_codex, _require_one, _require_platform_account, _set_disabled, _text, _without
+from .common import (
+    CPA_ADMIN,
+    _can_refresh_codex,
+    _require_one,
+    _require_platform_account,
+    _set_disabled,
+    _text,
+    _without,
+    instance_names,
+)
 
 cpa = on_alconna(
     Alconna(
         ["/", ""],
         "cpa",
-        Subcommand("status", help_text="探活与凭证概览"),
+        Subcommand(
+            "instance",
+            Subcommand("list", help_text="列出已配置实例"),
+            Subcommand(
+                "add",
+                Args["name", str]["base_url", str],
+                Option("--key", Args["key", str], dest="key", help_text="管理密钥"),
+                Option("--timeout", Args["timeout", str], dest="timeout", help_text="请求超时秒"),
+                Option("--quota-timeout", Args["quota_timeout", str], dest="quota_timeout", help_text="额度查询超时秒"),
+                Option("--concurrency", Args["concurrency", str], dest="concurrency", help_text="额度查询并发"),
+                Option("--cache-ttl", Args["cache_ttl", str], dest="cache_ttl", help_text="额度缓存秒"),
+                Option("--no-image", action=store_true, dest="no_image", help_text="该实例只发文字"),
+                help_text="新增 CPA 实例",
+            ),
+            Subcommand(
+                "remove|rm|delete",
+                Args["name", str],
+                Option("--yes|-y", action=store_true, dest="yes", help_text="确认删除"),
+                dest="remove",
+                help_text="删除 CPA 实例",
+            ),
+            Subcommand("show", Args["name", str], help_text="查看实例详情（密钥脱敏）"),
+            help_text="CPA 实例管理",
+        ),
+        Subcommand("status", Args["instance", str], help_text="探活与凭证概览"),
         Subcommand(
             "auth",
             Subcommand(
                 "list",
-                Args["provider?", str],
+                Args["instance", str]["provider?", str],
                 Option("--disabled", action=store_true, dest="disabled", help_text="包含已禁用账号"),
                 help_text="凭证摘要列表",
             ),
-            Subcommand("show", Args["query", str], help_text="凭证详情"),
-            Subcommand("on|enable", Args["query", str], dest="on", help_text="启用凭证"),
-            Subcommand("off|disable", Args["query", str], dest="off", help_text="禁用凭证"),
-            Subcommand("models", Args["query", str], help_text="凭证支持的模型"),
+            Subcommand("show", Args["instance", str]["query", str], help_text="凭证详情"),
+            Subcommand("on|enable", Args["instance", str]["query", str], dest="on", help_text="启用凭证"),
+            Subcommand("off|disable", Args["instance", str]["query", str], dest="off", help_text="禁用凭证"),
+            Subcommand("models", Args["instance", str]["query", str], help_text="凭证支持的模型"),
             Subcommand(
                 "delete",
-                Args["query", str],
+                Args["instance", str]["query", str],
                 Option("--yes|-y", action=store_true, help_text="确认删除"),
                 help_text="删除凭证文件",
             ),
@@ -68,8 +101,7 @@ cpa = on_alconna(
             "codex",
             Subcommand(
                 "refresh",
-                Args["query", str],
-                Option("--client|-c", Args["client", str], dest="client", help_text="指定客户端名称"),
+                Args["instance", str]["query", str],
                 help_text="消耗一次 Codex 重置次数并刷新额度",
             ),
             help_text="Codex 上游额度操作",
@@ -78,13 +110,13 @@ cpa = on_alconna(
             "login",
             Subcommand("cancel", help_text="取消进行中的登录"),
             Subcommand("callback", Args["url", str], help_text="提交浏览器回调链接"),
-            Args["provider?", str],
+            Args["instance", str]["provider?", str],
             help_text="OAuth / 设备码登录",
         ),
         meta=CommandMeta(
             description="CLIProxyAPI 管理（仅管理员）",
             usage="发送 cpa 或 /cpa 查看完整帮助",
-            example="cpa status\ncpa auth list claude\ncpa codex refresh user@example.com\ncpa codex refresh user@example.com --client Home\ncpa login claude",
+            example="cpa instance add Home http://127.0.0.1:8317 --key KEY\ncpa status Home\ncpa auth list Home claude\ncpa codex refresh Home user@example.com\ncpa login Home claude",
         ),
     ),
     permission=CPA_ADMIN,
@@ -123,13 +155,15 @@ async def _capture_oauth_callback(bot: Bot, event: Event) -> None:
 @cpa.assign("$main")
 async def cpa_help() -> None:
     providers = "（暂时无法获取，CPA 未连通时仍可看本帮助）"
-    try:
-        mapping = await discover_auth_urls()
-        known = ", ".join(sorted(set(mapping)))
-        if known:
-            providers = known
-    except CPAError:
-        pass
+    names = instance_names()
+    if names:
+        try:
+            mapping = await discover_auth_urls(names[0])
+            known = ", ".join(sorted(set(mapping)))
+            if known:
+                providers = known
+        except CPAError:
+            pass
     await UniMessage(_cpa_help_text(providers)).finish()
 
 
@@ -138,60 +172,191 @@ def _cpa_help_text(providers: str) -> str:
         [
             "CLIProxyAPI 管理（仅超级用户 / admins）",
             "命令前缀 / 可有可无：/cpa 与 cpa 相同。",
+            "除登录回调外，所有子命令都要在第一个位置写 CPA 实例名。",
+            "",
+            "【实例管理】",
+            "  cpa instance list",
+            "  cpa instance add <名称> <base_url> [--key K] [--timeout N] [--quota-timeout N] [--concurrency N] [--cache-ttl N] [--no-image]",
+            "  cpa instance show <名称>",
+            "  cpa instance remove <名称> --yes",
             "",
             "【探活】",
-            "  cpa status",
+            "  cpa status <实例>",
             "    版本、凭证 ready / 禁用 / 冷却计数。不回传配置正文。",
             "",
             "【凭证】",
-            "  cpa auth list [渠道] [--disabled]",
+            "  cpa auth list <实例> [渠道] [--disabled]",
             "    摘要列表。默认隐藏已禁用账号；加 --disabled 才显示。",
             "    渠道如 claude / codex(gpt, openai) / antigravity(反重力) / kimi / xai。",
-            "  cpa auth show <查询词>",
-            "    单条详情（含原始邮箱，仅管理员对照用）。",
-            "  cpa auth on|off <查询词>",
-            "    启用 / 禁用。enable / disable 同义。",
-            "  cpa auth models <查询词>",
-            "    该凭证支持的模型。",
-            "  cpa auth delete <查询词> --yes",
-            "    删除磁盘凭证。没有 --yes 只预告，不会真删。",
+            "  cpa auth show <实例> <查询词>",
+            "  cpa auth on|off <实例> <查询词>",
+            "  cpa auth models <实例> <查询词>",
+            "  cpa auth delete <实例> <查询词> --yes",
             "",
             "【Codex 重置】消耗官方重置次数，立刻刷新 5h/周窗口。",
-            "  仅 codex_refresh_admin 可执行；SUPERUSERS / admins 不能代替该权限。",
-            "  cpa codex refresh <查询词> [--client|-c <客户端>]",
-            "    查询词：邮箱、别名、文件名、auth_index。只匹配 Codex 账号。",
+            "  仅 codex_refresh_admin 可执行。",
+            "  cpa codex refresh <实例> <查询词>",
             "",
-            "【登录】授权链接优先私聊。不要加 is_webui。",
+            "【登录】授权链接优先私聊。",
             f"  可用渠道：{providers}",
-            "  cpa login <渠道>     例：cpa login claude",
-            "    浏览器会跳到 localhost。完成后把地址栏完整回调链接发到当前聊天。",
+            "  cpa login <实例> <渠道>",
+            "    完成后把浏览器地址栏完整回调链接发到当前聊天（会自动归属到该实例）。",
             "  cpa login callback <回调链接>",
-            "  cpa login cancel     取消进行中的登录",
+            "  cpa login cancel",
             "",
             "【额度】请用 /quota 命令。",
         ]
     )
 
 
-@cpa.assign("status")
-async def cpa_status() -> None:
-    client = get_client()
+# --------------------------------------------------------------------------- #
+# 实例管理
+# --------------------------------------------------------------------------- #
+
+
+def _instances_raw() -> list[dict[str, Any]]:
+    raw = state.get_snapshot().raw
+    cpa_raw = raw.get("cpa") if isinstance(raw, Mapping) else None
+    inst = cpa_raw.get("instances") if isinstance(cpa_raw, Mapping) else None
+    if not isinstance(inst, list):
+        return []
+    return [dict(item) for item in inst if isinstance(item, Mapping)]
+
+
+def _write_instances(instances: list[dict[str, Any]]) -> None:
+    state.update_config({"cpa": {"instances": instances}})
+
+
+@cpa.assign("instance.list")
+async def instance_list() -> None:
+    snapshot = state.get_snapshot()
+    if not snapshot.cpa.instances:
+        await UniMessage("还没有配置 CPA 实例。新增：/cpa instance add <名称> <base_url> [--key K]").finish()
+        return
+    lines = ["【CPA 实例】"]
+    for item in snapshot.cpa.instances:
+        key = "已设置" if item.management_key else "（未设置）"
+        lines.append(f"  {item.name}  {item.base_url}  key={key}")
+    await UniMessage("\n".join(lines)).finish()
+
+
+@cpa.assign("instance.show")
+async def instance_show(name: Query[str] = Query("instance.show.name")) -> None:
+    from ..cpa.format import mask_secret
+
+    raw = _text(name)
+    instance = state.get_snapshot().cpa.get(raw)
+    if instance is None:
+        await UniMessage(f"没有名为「{raw}」的实例。查看：/cpa instance list").finish()
+        return
+    lines = [
+        f"【实例 {instance.name}】",
+        f"  base_url：{instance.base_url}",
+        f"  management_key：{mask_secret(instance.management_key) if instance.management_key else '（未设置）'}",
+        f"  timeout：{instance.timeout}s",
+        f"  oauth：poll {instance.oauth_poll_interval}s / timeout {instance.oauth_timeout}s",
+        f"  quota：timeout {instance.quota_timeout}s  concurrency {instance.quota_concurrency}  cache_ttl {instance.quota_cache_ttl}s",
+        f"  quota_image：{instance.quota_image}",
+    ]
+    await UniMessage("\n".join(lines)).finish()
+
+
+@cpa.assign("instance.add")
+async def instance_add(
+    arp: Arparma,
+    name: Query[str] = Query("instance.add.name"),
+    base_url: Query[str] = Query("instance.add.base_url"),
+    # Option 取值比 store_true 多一层：值在 <option>.<arg> 路径上（如 instance.add.key.key）。
+    key: Query[str] = Query("instance.add.key.key"),
+    timeout: Query[str] = Query("instance.add.timeout.timeout"),
+    quota_timeout: Query[str] = Query("instance.add.quota_timeout.quota_timeout"),
+    concurrency: Query[str] = Query("instance.add.concurrency.concurrency"),
+    cache_ttl: Query[str] = Query("instance.add.cache_ttl.cache_ttl"),
+) -> None:
+    raw_name = normalize_name(_text(name))
+    if not valid_name(raw_name):
+        await UniMessage(f"实例名称非法：{_text(name)}（1–32 字符，不能含空白或 / \\ :）").finish()
+        return
+    url = _text(base_url).rstrip("/")
+    if not url:
+        await UniMessage("base_url 不能为空。").finish()
+        return
+    instances = _instances_raw()
+    if any(normalize_name(str(item.get("name") or "")) == raw_name for item in instances):
+        await UniMessage(f"实例「{raw_name}」已存在。查看：/cpa instance list").finish()
+        return
+    entry: dict[str, Any] = {"name": raw_name, "base_url": url}
+    if key.available and _text(key):
+        entry["management_key"] = _text(key)
+    for dest, query in (
+        ("timeout", timeout),
+        ("quota_timeout", quota_timeout),
+        ("quota_concurrency", concurrency),
+        ("quota_cache_ttl", cache_ttl),
+    ):
+        if query.available and _text(query):
+            entry[dest] = _text(query)
+    if arp.find("instance.add.no_image"):
+        entry["quota_image"] = False
+    instances.append(entry)
     try:
+        _write_instances(instances)
+    except ConfigError as exc:
+        await UniMessage(f"写入配置失败：{exc}").finish()
+        return
+    await UniMessage(f"已新增 CPA 实例「{raw_name}」→ {url}。查看：/cpa instance list").finish()
+
+
+@cpa.assign("instance.remove")
+async def instance_remove(
+    arp: Arparma,
+    name: Query[str] = Query("instance.remove.name"),
+) -> None:
+    raw_name = normalize_name(_text(name))
+    instances = _instances_raw()
+    remaining = [item for item in instances if normalize_name(str(item.get("name") or "")) != raw_name]
+    if len(remaining) == len(instances):
+        await UniMessage(f"没有名为「{raw_name}」的实例。查看：/cpa instance list").finish()
+        return
+    if not arp.find("instance.remove.yes"):
+        await UniMessage(f"即将删除实例「{raw_name}」。确认请发送：\ncpa instance remove {raw_name} --yes").finish()
+        return
+    try:
+        _write_instances(remaining)
+    except ConfigError as exc:
+        await UniMessage(f"写入配置失败：{exc}").finish()
+        return
+    await UniMessage(f"已删除 CPA 实例「{raw_name}」。").finish()
+
+
+# --------------------------------------------------------------------------- #
+# 探活 / 凭证 / 登录 / codex
+# --------------------------------------------------------------------------- #
+
+
+@cpa.assign("status")
+async def cpa_status(instance: Query[str] = Query("status.instance")) -> None:
+    name = _text(instance)
+    try:
+        client = get_client(name)
         headers = await client.probe()
         files = await client.list_auth_files()
         latest = await client.latest_version()
     except CPAError as exc:
         await UniMessage(str(exc)).finish()
-    await UniMessage(format_probe(headers, files, latest)).finish()
+        return
+    await UniMessage(f"[{name}] " + format_probe(headers, files, latest)).finish()
 
 
 @cpa.assign("auth.list")
 async def auth_list(
     arp: Arparma,
+    instance: Query[str] = Query("auth.list.instance"),
     provider: Query[str] = Query("auth.list.provider"),
 ) -> None:
+    name = _text(instance)
     try:
-        files = await get_client().list_auth_files()
+        files = await get_client(name).list_auth_files()
     except CPAError as exc:
         await UniMessage(str(exc)).finish()
         return
@@ -199,116 +364,104 @@ async def auth_list(
         needle = provider.result.strip().lower()
         files = [item for item in files if str(item.get("provider") or "").lower() == needle]
         if not files:
-            await UniMessage(f"没有 provider={provider.result} 的凭证。").finish()
+            await UniMessage(f"[{name}] 没有 provider={provider.result} 的凭证。").finish()
             return
-    await UniMessage(format_auth_list(files, include_disabled=bool(arp.find("auth.list.disabled")))).finish()
+    await UniMessage(
+        f"[{name}]\n" + format_auth_list(files, include_disabled=bool(arp.find("auth.list.disabled")))
+    ).finish()
 
 
 @cpa.assign("auth.show")
-async def auth_show(query: Query[str] = Query("auth.show.query")) -> None:
-    file = await _require_one(_text(query))
+async def auth_show(
+    instance: Query[str] = Query("auth.show.instance"),
+    query: Query[str] = Query("auth.show.query"),
+) -> None:
+    file = await _require_one(_text(instance), _text(query))
     await UniMessage(format_auth_detail(file)).finish()
 
 
 @cpa.assign("auth.on")
-async def auth_on(query: Query[str] = Query("auth.on.query")) -> None:
-    await _set_disabled(_text(query), disabled=False)
+async def auth_on(
+    instance: Query[str] = Query("auth.on.instance"),
+    query: Query[str] = Query("auth.on.query"),
+) -> None:
+    await _set_disabled(_text(instance), _text(query), disabled=False)
 
 
 @cpa.assign("auth.off")
-async def auth_off(query: Query[str] = Query("auth.off.query")) -> None:
-    await _set_disabled(_text(query), disabled=True)
+async def auth_off(
+    instance: Query[str] = Query("auth.off.instance"),
+    query: Query[str] = Query("auth.off.query"),
+) -> None:
+    await _set_disabled(_text(instance), _text(query), disabled=True)
 
 
 @cpa.assign("auth.models")
-async def auth_models(query: Query[str] = Query("auth.models.query")) -> None:
-    file = await _require_one(_text(query))
-    name = str(file.get("name") or "")
-    if not name:
+async def auth_models(
+    instance: Query[str] = Query("auth.models.instance"),
+    query: Query[str] = Query("auth.models.query"),
+) -> None:
+    name = _text(instance)
+    file = await _require_one(name, _text(query))
+    filename = str(file.get("name") or "")
+    if not filename:
         await UniMessage("该凭证没有文件名，无法查询模型列表。").finish()
+        return
     try:
-        models = await get_client().auth_models(name)
+        models = await get_client(name).auth_models(filename)
     except CPAError as exc:
         await UniMessage(str(exc)).finish()
+        return
     await UniMessage(format_models(models)).finish()
 
 
 @cpa.assign("auth.delete")
-async def auth_delete(arp: Arparma, query: Query[str] = Query("auth.delete.query")) -> None:
-    file = await _require_one(_text(query))
+async def auth_delete(
+    arp: Arparma,
+    instance: Query[str] = Query("auth.delete.instance"),
+    query: Query[str] = Query("auth.delete.query"),
+) -> None:
+    name = _text(instance)
+    file = await _require_one(name, _text(query))
     confirmed = arp.find("auth.delete.yes")
-    name = str(file.get("name") or "")
-    if not name:
+    filename = str(file.get("name") or "")
+    if not filename:
         await UniMessage("该凭证没有可删除的磁盘文件（可能是 runtime_only）。").finish()
+        return
     if not confirmed:
         await UniMessage(
-            f"即将删除凭证 {name}。确认请发送：\ncpa auth delete {query.result} --yes"
+            f"即将从实例「{name}」删除凭证 {filename}。确认请发送：\ncpa auth delete {name} {query.result} --yes"
         ).finish()
+        return
     try:
-        await get_client().delete_auth_file(name)
+        await get_client(name).delete_auth_file(filename)
     except CPAError as exc:
         await UniMessage(str(exc)).finish()
-    await UniMessage(f"已删除 {name}。").finish()
-
-
-def resolve_codex_refresh_target(
-    raw_query: str,
-    raw_client: str | None,
-    server: ServerConfig,
-    known_clients: set[str],
-) -> tuple[str, str, str]:
-    """解析 codex refresh 参数，返回 (target_client, query, error_message)。"""
-    account_query = raw_query.strip()
-    if not account_query:
-        return "", "", "查询词不能为空。"
-    client_param = (raw_client or "").strip()
-    if not client_param:
-        return server.client_name, account_query, ""
-    normalized_client = normalize_client_name(client_param)
-    if not valid_client_name(normalized_client):
-        return "", "", f"客户端名称非法：{client_param}"
-    if normalized_client not in known_clients:
-        return "", "", f"未知客户端：{client_param}"
-    return normalized_client, account_query, ""
+        return
+    await UniMessage(f"已从「{name}」删除 {filename}。").finish()
 
 
 @cpa.assign("codex.refresh")
 async def codex_refresh(
     event: Event,
+    instance: Query[str] = Query("codex.refresh.instance"),
     query: Query[str] = Query("codex.refresh.query"),
-    client: Query[str] = Query("codex.refresh.client"),
 ) -> None:
     if not _can_refresh_codex(event):
         await UniMessage("未配置 codex_refresh_admin，或你不在名单中，无法刷新。").finish()
         return
-    snapshot = state.get_snapshot()
-    server = snapshot.server
-    hub = get_hub()
-    known = hub.known_names(server)
-    target_client, account_query, err = resolve_codex_refresh_target(
-        _text(query),
-        _text(client) if client.available else None,
-        server,
-        known,
-    )
-    if err:
-        await UniMessage(err).finish()
+    name = _text(instance)
+    account_query = _text(query)
+    if not account_query:
+        await UniMessage("查询词不能为空。").finish()
         return
-    if target_client == server.client_name:
-        file = await _require_platform_account("codex", account_query)
-        try:
-            message = await refresh_codex_quota(file)
-        except CPAError as exc:
-            await UniMessage(str(exc)).finish()
-            return
-        await UniMessage(message).finish()
-        return
+    file = await _require_platform_account(name, "codex", account_query)
     try:
-        res = await hub.refresh_codex(target_client, account_query)
-    except (CPAError, HubError) as exc:
+        message = await refresh_codex_quota(file, name)
+    except CPAError as exc:
         await UniMessage(str(exc)).finish()
         return
-    await UniMessage(res.message).finish()
+    await UniMessage(message).finish()
 
 
 @cpa.assign("login.cancel")
@@ -332,15 +485,21 @@ async def login_callback(bot: Bot, event: Event, url: Query[str] = Query("login.
 
 
 @cpa.assign("login", additional=_without("login.cancel", "login.callback"))
-async def login_start(bot: Bot, event: Event, provider: Query[str] = Query("login.provider")) -> None:
+async def login_start(
+    bot: Bot,
+    event: Event,
+    instance: Query[str] = Query("login.instance"),
+    provider: Query[str] = Query("login.provider"),
+) -> None:
+    name = _text(instance)
     if not provider.available:
-        mapping = await discover_auth_urls()
+        mapping = await discover_auth_urls(name)
         known = ", ".join(sorted(set(mapping)))
-        await UniMessage(f"用法：cpa login <渠道>\n可用渠道：{known or '（无法获取）'}").finish()
+        await UniMessage(f"用法：cpa login <实例> <渠道>\n可用渠道：{known or '（无法获取）'}").finish()
         return
     try:
-        canonical, path = await resolve_auth_path(_text(provider))
-        payload = await get_client().start_login(path)
-        await start_login(bot, event, canonical, payload)
+        canonical, path = await resolve_auth_path(name, _text(provider))
+        payload = await get_client(name).start_login(path)
+        await start_login(bot, event, name, canonical, payload)
     except CPAError as exc:
         await UniMessage(str(exc)).finish()
