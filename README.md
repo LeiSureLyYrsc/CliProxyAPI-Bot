@@ -171,11 +171,12 @@ Bot 与 CPA 不在同一台机器时，CPA 需要 `remote-management.allow-remot
 
 查询词可以是 email、文件名、label、别名或 `auth_index`（含前缀）。列表和额度图优先显示别名；未设别名时用 `渠道-短索引`，避免把邮箱发到聊天。同邮箱出现在多个渠道时用 `/quota alias set antigravity user@example.com AG-1`。WorkBuddy 账号也可绑别名：`/quota alias set workbuddy <uid> <别名>`。详情 `cpa auth show` 仍会列出原始字段，便于对照。
 
-别名文件 `data/quotanoa_aliases.json` 还支持**自定义渠道查询关键字**（保留键 `channel_keywords`，仅手改 JSON，不加命令、不影响出图/文本）：
+别名文件 `data/quotanoa_aliases.json` **首次运行自动生成**（含用例注释与各渠道空桶，直接编辑即可），并**支持热重载**：手改保存后下一条 `/quota` 即生效，无需重启；文件被删除会自动重建。它还支持**自定义渠道查询关键字**（保留键 `channel_keywords`，仅手改 JSON，不加命令、不影响出图/文本）：
 
 ```json
 {
-  "channel_keywords": { "agy": "antigravity", "gpt": "codex", "火山方舟": "volcengine" },
+  "_readme": [ "账号别名：渠道 → 身份键 → 显示名。保存后自动热重载。" ],
+  "channel_keywords": { "agy": "antigravity" },
   "antigravity": { "user@example.com": "AG-1" }
 }
 ```

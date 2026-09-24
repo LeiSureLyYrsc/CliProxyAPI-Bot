@@ -7,6 +7,7 @@ require("nonebot_plugin_alconna")
 
 from . import state as state  # noqa: E402
 from . import commands as commands  # noqa: E402, F401
+from .aliases import ensure_aliases_file  # noqa: E402
 from .cpa.client import close_client  # noqa: E402
 from .cpa.oauth import cancel_all  # noqa: E402
 from .render.html import close_renderer  # noqa: E402
@@ -32,6 +33,8 @@ driver = get_driver()
 async def _startup() -> None:
     # 惰性加载配置快照，尽早暴露配置错误。
     state.get_snapshot()
+    # 预生成别名文件模板，方便用户直接编辑（支持热重载）。
+    ensure_aliases_file()
 
 
 @driver.on_shutdown

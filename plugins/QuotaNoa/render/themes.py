@@ -263,7 +263,3 @@ _global_registry = ThemeRegistry()
 
 def get_theme_registry() -> ThemeRegistry:
     return _global_registry
-
-
-def reset_theme_registry() -> None:
-    _global_registry.refresh()

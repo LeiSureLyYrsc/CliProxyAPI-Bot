@@ -102,32 +102,3 @@ def set_cards_per_row(count: int | str) -> RenderSettings:
     target = normalize_cards_per_row(count)
     current = get_render_settings()
     return _persist(current.theme, target)
-
-
-# --------------------------------------------------------------------------- #
-# 测试辅助
-# --------------------------------------------------------------------------- #
-
-
-def use_memory_render_settings(data: RenderSettings | Mapping[str, Any] | None = None) -> None:
-    """测试用：把 render 段写入内存配置，不落盘。"""
-    from .. import state
-    from ..config import default_config_dict
-
-    if isinstance(data, RenderSettings):
-        raw = data.to_dict()
-    elif isinstance(data, Mapping):
-        raw = dict(data)
-    else:
-        raw = {}
-    theme = normalize_theme_or_default(raw.get("theme"))
-    cards = normalize_cards_per_row_or_default(raw.get("cards_per_row"))
-    payload = default_config_dict()
-    payload["render"] = {"theme": theme, "cards_per_row": cards}
-    state.use_memory_config(payload)
-
-
-def reset_render_settings_cache() -> None:
-    from .. import state
-
-    state.reset_state()

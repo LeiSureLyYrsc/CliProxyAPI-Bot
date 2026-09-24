@@ -1,9 +1,11 @@
 """分渠道账号别名与自定义渠道关键字。
 
-存储文件默认 ``data/quotanoa_aliases.json``，结构为“渠道 → 身份键 → 别名”：
+存储文件默认 ``data/quotanoa_aliases.json``，**首次运行会自动生成可编辑模板**，
+结构为“渠道 → 身份键 → 别名”：
 
 ```json
 {
+  "_readme": [ "用法提示…" ],
   "*":           { "user@example.com": "AG-1" },
   "antigravity": { "user@example.com": "AG-1" },
   "volcengine":  { "volc-1": "火山主号" },
@@ -15,8 +17,11 @@
 - ``channel_keywords`` 为**保留键**：自定义渠道查询关键字 → canonical 渠道名，
   仅影响 ``/quota``、``/cpa quota`` 的位置参数解析（不影响出图 / 文本渲染）。
   例如写入 ``{"agy": "antigravity"}`` 后 ``/quota agy`` 等同 ``/quota antigravity``。
+  内置关键字优先，本表只补足 / 覆盖未内置的组合。
+- 以 ``_`` 开头的键（如 ``_readme``）为**注释/元数据**，读取时忽略。
 - 旧版扁平格式（``{"身份键": "别名"}``）读取时自动归一化进 ``*`` 桶。
-- 本模块自带 mtime 检查（带 1 秒节流），外部手改文件也会生效。
+- **热重载**：本模块自带 mtime 检查（1 秒节流），在聊天里手改文件后下一条命令即生效；
+  文件被删除时也会自动重新生成模板。
 """
 
 from __future__ import annotations
@@ -26,13 +31,15 @@ import time
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
-from .model import channel_of, normalize_channel
+from .model import PLATFORM_ORDER, channel_of, normalize_channel
 
 _EMAIL = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
 
 GLOBAL_BUCKET = "*"
 #: 保留键：自定义渠道查询关键字表（不参与别名列表展示）。
 CHANNEL_KEYWORDS_KEY = "channel_keywords"
+#: 保留键：模板里的用法注释（读取时忽略）。
+README_KEY = "_readme"
 _CHECK_INTERVAL = 1.0
 
 _store: dict[str, dict[str, str]] = {}
@@ -41,6 +48,27 @@ _loaded = False
 _memory_only = False
 _signature: tuple[int, int] | None = None
 _checked_at = 0.0
+
+
+def default_aliases_dict() -> dict[str, Any]:
+    """返回别名文件的默认模板（含用法注释与各渠道空桶），便于用户手改。"""
+    payload: dict[str, Any] = {
+        README_KEY: [
+            "账号别名：渠道 → 身份键 → 显示名。",
+            "身份键可用 auth_index、凭证文件名（可省 .json）、邮箱，或其前缀。",
+            f"“{GLOBAL_BUCKET}” 为全局桶：任何渠道自身桶未命中时回退到这里。",
+            f"{CHANNEL_KEYWORDS_KEY}：自定义渠道查询关键字（只影响 /quota 解析，不改出图/文本）。",
+            "保存后自动热重载：下一条 /quota 即生效，无需重启。",
+        ],
+        CHANNEL_KEYWORDS_KEY: {"agy": "antigravity"},
+    }
+    for channel in PLATFORM_ORDER:
+        if channel == "other":
+            continue
+        payload.setdefault(channel, {})
+    payload.setdefault(GLOBAL_BUCKET, {})
+    return payload
+
 
 
 # --------------------------------------------------------------------------- #
@@ -158,8 +186,8 @@ def _normalize_store(data: Any) -> dict[str, dict[str, str]]:
     flat: dict[str, str] = {}
     for key, value in data.items():
         name = str(key).strip()
-        if not name or name == CHANNEL_KEYWORDS_KEY:
-            # 保留键单独解析，不能当作渠道桶，否则会污染别名列表。
+        if not name or name.startswith("_") or name == CHANNEL_KEYWORDS_KEY:
+            # 注释 / 保留键单独处理，不能当作渠道桶，否则会污染别名列表。
             continue
         if isinstance(value, Mapping):
             bucket = _clean_map(value)
@@ -193,6 +221,30 @@ def _normalize_channel_keywords(data: Any) -> dict[str, str]:
     return cleaned
 
 
+def _ensure_file(path: Path) -> bool:
+    """确保别名文件存在；缺失时生成可编辑模板。返回是否新建。"""
+    if path.is_file():
+        return False
+    try:
+        from .config import atomic_write_json
+
+        atomic_write_json(path, default_aliases_dict())
+        return True
+    except Exception:
+        # 只读目录 / 权限不足时静默降级：本次以空表运行。
+        return False
+
+
+def ensure_aliases_file() -> Path:
+    """确保别名文件存在（缺失时生成可编辑模板），返回其路径。
+
+    供插件启动时调用，使用户在首次运行后即可直接编辑别名文件。
+    """
+    path = aliases_path()
+    _ensure_file(path)
+    return path
+
+
 def _ensure_loaded() -> None:
     global _store, _channel_keywords, _signature, _checked_at, _loaded
     if _memory_only:
@@ -202,6 +254,7 @@ def _ensure_loaded() -> None:
         return
     _checked_at = now
     path = aliases_path()
+    _ensure_file(path)
     signature = _read_signature(path)
     if _loaded and signature == _signature:
         return
@@ -328,8 +381,16 @@ def _commit() -> None:
     from .config import atomic_write_json
 
     path = aliases_path()
-    # 写回时保留用户手改的 channel_keywords 保留键，避免被覆盖丢失。
-    payload: dict[str, Any] = {key: dict(bucket) for key, bucket in _store.items()}
+    # 写回时保留用户手改的注释（_ 前缀）与 channel_keywords 保留键，避免被覆盖丢失。
+    raw = _read_file(path)
+    payload: dict[str, Any] = {}
+    if isinstance(raw, Mapping):
+        for key, value in raw.items():
+            if str(key).startswith("_"):
+                payload[str(key)] = value
+    if README_KEY not in payload:
+        payload[README_KEY] = default_aliases_dict()[README_KEY]
+    payload.update({key: dict(bucket) for key, bucket in _store.items()})
     if _channel_keywords:
         payload[CHANNEL_KEYWORDS_KEY] = dict(_channel_keywords)
     try:
@@ -419,18 +480,6 @@ def _public_key(key: str) -> str:
 # --------------------------------------------------------------------------- #
 # 生命周期
 # --------------------------------------------------------------------------- #
-
-
-def use_memory_aliases(data: Mapping[str, Any] | None = None) -> None:
-    """测试用：只走内存，不读写文件。"""
-    global _store, _channel_keywords, _loaded, _memory_only, _signature, _checked_at
-    _memory_only = True
-    raw = data or {}
-    _store = _normalize_store(raw)
-    _channel_keywords = _normalize_channel_keywords(raw)
-    _loaded = True
-    _signature = None
-    _checked_at = 0.0
 
 
 def reset_alias_cache() -> None:

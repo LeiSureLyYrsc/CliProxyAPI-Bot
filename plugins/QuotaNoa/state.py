@@ -53,12 +53,6 @@ def register_reload_hook(hook: Callable[[ConfigSnapshot], None]) -> None:
         _hooks.append(hook)
 
 
-def set_config_path(path: Path | str | None) -> None:
-    """覆盖配置文件的解析路径（测试用）。传 None 恢复默认解析。"""
-    global _path_override
-    _path_override = Path(path).expanduser().resolve() if path else None
-
-
 def config_file_path() -> Path:
     """解析配置文件的绝对路径。"""
     global _env_config
@@ -276,38 +270,6 @@ def update_config(patch: Mapping[str, Any]) -> ConfigSnapshot:
         config_module.atomic_write_json(path, merged)
         _load(force=True, generate=False)
         return _snapshot  # type: ignore[return-value]
-
-
-def use_memory_config(data: ConfigSnapshot | Mapping[str, Any] | None = None) -> None:
-    """测试用：只走内存，不读写文件。"""
-    global _snapshot, _generation, _signature, _last_error, _loaded_path, _memory_only
-    with _lock:
-        _memory_only = True
-        if isinstance(data, ConfigSnapshot):
-            _snapshot = data
-        elif isinstance(data, Mapping):
-            _snapshot = snapshot_from_raw(data)
-        else:
-            _snapshot = snapshot_from_raw(config_module.default_config_dict())
-        _generation += 1
-        _signature = None
-        _last_error = ""
-        _loaded_path = None
-        _invalidate(_snapshot)
-
-
-def reset_state() -> None:
-    """清空快照缓存，回到未加载状态。"""
-    global _snapshot, _generation, _signature, _last_error, _loaded_path, _memory_only, _env_config, _path_override
-    with _lock:
-        _snapshot = None
-        _generation = 0
-        _signature = None
-        _last_error = ""
-        _loaded_path = None
-        _memory_only = False
-        _env_config = None
-        _path_override = None
 
 
 def invalidate_downstream() -> None:
