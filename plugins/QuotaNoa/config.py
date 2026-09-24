@@ -24,7 +24,12 @@ from typing import Any, Mapping
 
 from pydantic import BaseModel, Field, field_validator
 
-from .model import is_channel_name, normalize_channel
+from .model import (
+    ALL_CHANNELS_TOKEN,
+    is_all_channels,
+    is_channel_name,
+    normalize_channel,
+)
 
 DEFAULT_CONFIG_FILE = "data/quotanoa_config.json"
 DEFAULT_ALIASES_FILE = "data/quotanoa_aliases.json"
@@ -417,10 +422,17 @@ def _parse_cpa_instance(entry: Any) -> CpaInstance | None:
 
 
 def _parse_additional_channels(value: Any) -> tuple[str, ...]:
-    """解析额外渠道列表：归一到 canonical 渠道名，去重，丢弃未知项。"""
+    """解析额外渠道列表：归一到 canonical 渠道名，去重，丢弃未知项。
+
+    若列表里含 ``all``（或 ``*``），直接返回 ``("all",)`` 表示全部渠道
+    （等价于命令的 ``/quotanoa all``），不再展开其它条目。
+    """
+    items = _as_str_list(value)
+    if any(is_all_channels(item) for item in items):
+        return (ALL_CHANNELS_TOKEN,)
     cleaned: list[str] = []
     seen: set[str] = set()
-    for item in _as_str_list(value):
+    for item in items:
         canonical = normalize_channel(item)
         if not canonical or canonical in seen:
             continue

@@ -228,6 +228,15 @@ def is_channel_name(value: str) -> bool:
     return bool(normalize_channel(value))
 
 
+#: 额外渠道配置里的“全部渠道”关键字（等价于命令的 ``all`` / ``--all``）。
+ALL_CHANNELS_TOKEN = "all"
+
+
+def is_all_channels(value: str) -> bool:
+    """值是否为“全部渠道”关键字（``all`` / ``--all`` / ``-a`` / ``*``）。"""
+    return (value or "").strip().lower() in {"all", "--all", "-a", "*"}
+
+
 def channel_of(file: Mapping[str, Any]) -> str:
     """从 CPA 凭证字典推断渠道；未知归入 other。"""
     raw = str(file.get("provider") or file.get("type") or "").strip().lower().replace("_", "-")

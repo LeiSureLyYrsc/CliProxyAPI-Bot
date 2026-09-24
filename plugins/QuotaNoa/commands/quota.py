@@ -31,7 +31,7 @@ from ..cpa.quota import (
     peek_quota_cache,
     platform_of,
 )
-from ..model import LOCAL_CHANNELS, normalize_channel
+from ..model import LOCAL_CHANNELS, is_all_channels, normalize_channel
 from ..query import QuotaSelection, parse_quota_command, strip_quota_head, tokenize
 from ..render.html import RenderError, render_board_images
 from ..volcengine.provider import collect_board as collect_volcengine_board
@@ -81,13 +81,17 @@ def _all_channels_plan() -> list[_QueryUnit]:
 def _resolve_query_plan(configured, entry: str) -> list[_QueryUnit]:
     """按入口解析无参默认查询计划（有序）。
 
-    主渠道在前，配置的额外渠道追加在后；已被主渠道覆盖的额外渠道自动去重：
+    主渠道在前，配置的额外渠道追加在后；已被主渠道覆盖的额外渠道自动去重。
+
+    额外渠道里写入 ``all`` 等价于该入口的 ``all`` 子命令——输出全部渠道：
 
     - ``/quotanoa``：本地渠道（火山 / WorkBuddy / Qoder）在前，
       再叠加 ``quotanoa_additional_channel`` 里的额外渠道。
     - ``/cpa quota``：全部 CPA 平台在前，
       再叠加 ``cpa_additional_channel`` 里的额外本地渠道。
     """
+    if any(is_all_channels(raw) for raw in configured):
+        return _all_channels_plan()
     if entry == "cpa":
         units: list[_QueryUnit] = [_QueryUnit("cpa_all")]
         for raw in configured:
@@ -269,6 +273,7 @@ def _quota_help_text() -> str:
             "  /quotanoa",
             "    无参数：本地渠道（火山 / WorkBuddy / Qoder）+ quotanoa_additional_channel 追加的渠道。",
             "    /cpa quota 无参：全部 CPA 平台 + cpa_additional_channel 追加的渠道。",
+            "    追加渠道写 all（或 *）时该入口直接输出全部渠道。",
             "  /quotanoa all",
             "    查询全部渠道：本地渠道 + 全部 CPA 平台（同义 --all / -a）。",
             "  /quotanoa help",

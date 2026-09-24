@@ -109,8 +109,8 @@ telegram_bots=[{"token": "123456:ABC-DEF"}]
     }
   },
   "render": { "theme": "default", "cards_per_row": 4 },
-  "quotanoa_additional_channel": [],  // /quotanoa 无参时在本地渠道之外追加的渠道（如 antigravity）
-  "cpa_additional_channel": []        // /cpa quota 无参时在全部 CPA 平台之外追加的渠道（如 qoder / workbuddy）
+  "quotanoa_additional_channel": [],  // /quotanoa 无参时在本地渠道之外追加的渠道（如 antigravity；写 all = 全部渠道）
+  "cpa_additional_channel": []        // /cpa quota 无参时在全部 CPA 平台之外追加的渠道（如 qoder / workbuddy；写 all = 全部渠道）
 }
 ```
 
@@ -118,8 +118,8 @@ telegram_bots=[{"token": "123456:ABC-DEF"}]
 | --- | --- |
 | `cpa.instances[]` | 每个 CLIProxyAPI 实例一项，自带 `base_url` / `management_key` / 超时 / 并发 / 缓存 / 图片开关。`base_url` 可写 `http://host:8317` 或带 `/v0/management` 的完整前缀 |
 | `cpa.admins` / `cpa.codex_refresh_admin` | 全局权限名单（与实例无关） |
-| `quotanoa_additional_channel` | `/quotanoa` 无参默认查询的**追加渠道**：默认先查本地渠道（`volcengine`/`workbuddy`/`qoder`），再把这里的渠道追加在后。填 CPA 平台名（`claude`/`codex`/`antigravity`/`kimi`/`xai`/`gemini-cli`）即让 `/quotanoa` 也带出这些 CPA 额度 |
-| `cpa_additional_channel` | `/cpa quota` 无参默认查询的**追加渠道**：默认先查全部 CPA 平台，再把这里的渠道追加在后。填本地渠道名（`volcengine`/`workbuddy`/`qoder`）即让 `/cpa quota` 也带出这些本地额度 |
+| `quotanoa_additional_channel` | `/quotanoa` 无参默认查询的**追加渠道**：默认先查本地渠道（`volcengine`/`workbuddy`/`qoder`），再把这里的渠道追加在后。填 CPA 平台名（`claude`/`codex`/`antigravity`/`kimi`/`xai`/`gemini-cli`）即让 `/quotanoa` 也带出这些 CPA 额度；填 `all`（或 `*`）则无参 `/quotanoa` 直接输出全部渠道 |
+| `cpa_additional_channel` | `/cpa quota` 无参默认查询的**追加渠道**：默认先查全部 CPA 平台，再把这里的渠道追加在后。填本地渠道名（`volcengine`/`workbuddy`/`qoder`）即让 `/cpa quota` 也带出这些本地额度；填 `all`（或 `*`）则无参 `/cpa quota` 直接输出全部渠道 |
 | `volcengine.accounts` | 火山方舟 Coding Plan / Agent Plan 查询凭据（控制面 AccessKey，需 `ArkReadOnlyAccess`） |
 | `workbuddy.servers[]` | 每个 WorkBuddy2API 网关一项：`base_url`（如 `http://host:7863`）、`username` + `password`（控制台账号，插件自动登录换 `api_key`）、可选 `api_key`（跳过登录直连）、`timeout`。多个网关的账号会汇总到同一张 WorkBuddy 板，按网关名前缀区分 |
 | `qoder.servers[]` | 每个 Qoder2OAPI 代理一项：`name`、`base_url`（如 `http://127.0.0.1:8000`）、`api_key`、`timeout`。多个代理的号池账号会汇总到同一张 Qoder 板，按代理名前缀区分 |
