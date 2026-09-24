@@ -212,6 +212,12 @@ def _invalidate(snapshot: ConfigSnapshot, previous: ConfigSnapshot | None = None
         clear_quota_cache()
     except Exception as exc:
         logger.warning(f"配置重载后清除额度缓存失败：{exc}")
+    try:
+        from .cache import clear_boards
+
+        clear_boards()
+    except Exception as exc:
+        logger.warning(f"配置重载后清除渠道缓存失败：{exc}")
     # 仅当连接相关配置（base_url/management_key/timeout）变化时才重建 HTTP 客户端，
     # 避免主题等无关修改无谓地重建连接池。
     connection_changed = previous is None or _cpa_connection_slice(previous) != _cpa_connection_slice(snapshot)

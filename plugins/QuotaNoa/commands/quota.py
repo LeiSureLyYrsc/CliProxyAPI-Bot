@@ -419,7 +419,7 @@ async def _send_volcengine_results(cpa: CpaConfig, selection: QuotaSelection) ->
         return
     await UniMessage("正在查询火山方舟 Coding Plan 额度…").send()
     try:
-        board = await collect_volcengine_board(accounts)
+        board = await collect_volcengine_board(accounts, force=selection.fresh)
     except Exception as exc:  # noqa: BLE001 - 兜底，避免单渠道异常打断消息处理
         await UniMessage(f"火山额度查询失败：{exc}").finish()
         return
@@ -456,7 +456,7 @@ async def _send_workbuddy_results(cpa: CpaConfig, selection: QuotaSelection) -> 
         return
     await UniMessage("正在查询 WorkBuddy 额度…").send()
     try:
-        board = await collect_workbuddy_board(servers)
+        board = await collect_workbuddy_board(servers, force=selection.fresh)
     except Exception as exc:  # noqa: BLE001 - 兜底，避免单渠道异常打断消息处理
         await UniMessage(f"WorkBuddy 额度查询失败：{exc}").finish()
         return

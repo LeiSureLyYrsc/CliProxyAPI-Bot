@@ -95,6 +95,14 @@ telegram_bots=[{"token": "123456:ABC-DEF"}]
       { "name": "wb-main", "base_url": "http://127.0.0.1:7863", "username": "admin", "password": "workbuddy", "timeout": 30.0 }
     ]
   },
+  "refreshcache": {
+    "default": 60,                 // 未单独配置渠道的默认缓存秒数（0 = 不缓存）
+    "channels": {                  // 按渠道覆盖；键为渠道名（claude/codex/火山/workbuddy…）
+      "claude": 120,
+      "codex": 300,
+      "volcengine": 0
+    }
+  },
   "render": { "theme": "default", "cards_per_row": 4 }
 }
 ```
@@ -105,6 +113,7 @@ telegram_bots=[{"token": "123456:ABC-DEF"}]
 | `cpa.admins` / `cpa.codex_refresh_admin` | 全局权限名单（与实例无关） |
 | `volcengine.accounts` | 火山方舟 Coding Plan 查询凭据（控制面 AccessKey，需 `ArkReadOnlyAccess`） |
 | `workbuddy.servers[]` | 每个 WorkBuddy2API 网关一项：`base_url`（如 `http://host:7863`）、`username` + `password`（控制台账号，插件自动登录换 `api_key`）、可选 `api_key`（跳过登录直连）、`timeout`。多个网关的账号会汇总到同一张 WorkBuddy 板，按网关名前缀区分 |
+| `refreshcache` | 各渠道查询结果的缓存秒数：`default` 为兜底，`channels` 按渠道名覆盖（支持别名如 `gpt`/`火山` 归一）。CPA 实例未命中渠道覆盖时回退到实例 `quota_cache_ttl`；`0` 表示该渠道不缓存。`/quota --fresh` 仍强制重查 |
 | `render` | 额度图主题与每行卡片数（1..6），`/quota theme` `/quota card row` 可改 |
 
 别名文件路径由代码（`plugins/QuotaNoa/config.py` 的 `DEFAULT_ALIASES_FILE`）决定，默认 `data/quotanoa_aliases.json`，**不写入生成的配置文件**；如需改路径，可在 JSON 里显式加可选覆盖项 `"aliases_file"`（旧配置兼容）。
@@ -183,6 +192,8 @@ Bot 与 CPA 不在同一台机器时，CPA 需要 `remote-management.allow-remot
 ```
 
 写入后 `/quota agy` 等同 `/quota antigravity`。渠道名必须能归一到内置渠道（`claude` / `codex` / `antigravity` / `kimi` / `xai` / `gemini-cli` / `volcengine` / `workbuddy`）。
+
+WorkBuddy 卡片/文字里的倒计时是**重置**语义，固定显示为 `最早的(空)套餐 XdXh 后过期`，表示该账号所有周期套餐中**最先到期**的那个还剩多久；其进度条百分比则是**所有套餐聚合**的剩余比例，两者口径不同。
 
 内置登录渠道：`claude` / `anthropic`、`codex`、`antigravity`、`kimi`、`xai`。若 CPA 插件声明了 `supports_oauth`，还会动态发现 `/{provider}-auth-url`。不要写死已从 core 移除的 `gemini-cli` / `qwen` / `iflow`。
 

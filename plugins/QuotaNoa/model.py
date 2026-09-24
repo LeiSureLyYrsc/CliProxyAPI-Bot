@@ -24,6 +24,9 @@ class QuotaWindow:
     limit: float | None = None
     reset_label: str = "-"
     reset_at: float | None = None
+    #: 自定义重置文案；非空时卡片与文字总览直接使用它，忽略 ``reset_label`` 的通用格式化。
+    #: 供 WorkBuddy 这类「按最早到期套餐」表达倒计时的渠道使用。
+    reset_note: str = ""
     #: 该窗口进度条的"主方向"："" = 自动推断（旧数据按 id 前缀，如 grok- 视为已用）；
     #: "remaining" = 表示剩余（多数渠道）；"used" = 表示已用（如火山 Percent）。
     direction: str = ""

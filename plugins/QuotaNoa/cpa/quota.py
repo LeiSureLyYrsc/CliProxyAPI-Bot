@@ -153,7 +153,8 @@ async def collect_quotas(
             board.cached = True
             return board
 
-    cfg = state.get_snapshot().cpa.get(instance)
+    snapshot = state.get_snapshot()
+    cfg = snapshot.cpa.get(instance)
     if cfg is None:
         raise CPAError(f"没有名为「{instance}」的 CPA 实例。")
     client = get_client(instance)
@@ -162,7 +163,8 @@ async def collect_quotas(
         *(_one_account(client, cfg, item, sem) for item in wanted)
     )
     board = stamp_instance(_build_board(list(reports)), instance)
-    _quota_cache[cache_id] = (now + max(0.0, cfg.quota_cache_ttl), board)
+    ttl = snapshot.cache_ttl(platform or "", fallback=cfg.quota_cache_ttl)
+    _quota_cache[cache_id] = (now + max(0.0, ttl), board)
     return board
 
 
@@ -1268,9 +1270,19 @@ def _window_text(window: QuotaWindow, *, compact: bool = False) -> str:
     else:
         body = "?"
     if compact:
-        reset = f" →{window.reset_label}" if window.reset_label and window.reset_label != "-" else ""
+        if window.reset_note:
+            reset = f" {window.reset_note}"
+        elif window.reset_label and window.reset_label != "-":
+            reset = f" →{window.reset_label}"
+        else:
+            reset = ""
         return f"{window.label} {body}{reset}"
-    reset = f"  重置 {window.reset_label}" if window.reset_label and window.reset_label != "-" else ""
+    if window.reset_note:
+        reset = f"  {window.reset_note}"
+    elif window.reset_label and window.reset_label != "-":
+        reset = f"  重置 {window.reset_label}"
+    else:
+        reset = ""
     return f"{window.label} {body}{reset}"
 
 

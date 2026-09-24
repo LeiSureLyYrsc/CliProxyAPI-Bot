@@ -56,12 +56,21 @@ async def quota_config_show() -> None:
     lines.extend(
         [
             "",
+            "refreshcache：",
+            f"  default：{snapshot.refreshcache.default:g}s",
+            "",
             "render：",
             f"  theme：{snapshot.render.theme}  cards_per_row：{snapshot.render.cards_per_row}",
             "",
             f"aliases_file：{snapshot.aliases_file}",
         ]
     )
+    channels = snapshot.refreshcache.channels
+    if channels:
+        for name in sorted(channels):
+            lines.append(f"  {name}：{channels[name]:g}s")
+    else:
+        lines.append("  （无渠道级覆盖，全部用 default）")
     error = state.last_error()
     if error:
         lines.append("")

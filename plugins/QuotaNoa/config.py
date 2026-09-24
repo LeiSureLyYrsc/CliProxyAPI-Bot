@@ -24,7 +24,7 @@ from typing import Any, Mapping
 
 from pydantic import BaseModel, Field, field_validator
 
-from .model import is_channel_name
+from .model import is_channel_name, normalize_channel
 
 DEFAULT_CONFIG_FILE = "data/quotanoa_config.json"
 DEFAULT_ALIASES_FILE = "data/quotanoa_aliases.json"
@@ -35,6 +35,7 @@ MIN_CARDS_PER_ROW = 1
 MAX_CARDS_PER_ROW = 6
 
 DEFAULT_CPA_BASE_URL = "http://127.0.0.1:8317"
+DEFAULT_REFRESH_CACHE_TTL = 60.0
 
 #: 实例名 / 渠道账号名的通用长度上限。
 MAX_NAME_LEN = 32
@@ -250,6 +251,18 @@ class RenderConfig:
 
 
 @dataclass(frozen=True)
+class RefreshCacheConfig:
+    """各渠道查询结果缓存时长（秒）。
+
+    ``channels`` 以 canonical 渠道名为键；未列出的渠道用 ``default``。
+    ``0`` 表示该渠道不缓存。
+    """
+
+    default: float = DEFAULT_REFRESH_CACHE_TTL
+    channels: Mapping[str, float] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class ConfigSnapshot:
     """一次性完整配置快照。整体替换，不在原地修改。"""
 
@@ -257,10 +270,26 @@ class ConfigSnapshot:
     volcengine: VolcengineConfig = field(default_factory=VolcengineConfig)
     workbuddy: WorkbuddyConfig = field(default_factory=WorkbuddyConfig)
     render: RenderConfig = field(default_factory=RenderConfig)
+    refreshcache: RefreshCacheConfig = field(default_factory=RefreshCacheConfig)
     #: 别名文件路径；默认由本模块的 ``DEFAULT_ALIASES_FILE`` 决定，
     #: JSON 里的 ``aliases_file`` 仅作可选覆盖（旧配置兼容），不再写入生成文件。
     aliases_file: str = DEFAULT_ALIASES_FILE
     raw: Mapping[str, Any] = field(default_factory=dict)
+
+    def cache_ttl(self, channel: str = "", *, fallback: float | None = None) -> float:
+        """渠道级缓存 TTL（秒）。
+
+        优先级：``refreshcache.channels[渠道]`` → ``fallback``（如 CPA 实例级
+        ``quota_cache_ttl``）→ ``refreshcache.default``。
+        """
+        canonical = normalize_channel(channel) if channel else ""
+        if canonical:
+            ttl = self.refreshcache.channels.get(canonical)
+            if ttl is not None:
+                return ttl
+        if fallback is not None:
+            return fallback
+        return self.refreshcache.default
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -306,6 +335,10 @@ class ConfigSnapshot:
                     }
                     for server in self.workbuddy.servers
                 ]
+            },
+            "refreshcache": {
+                "default": self.refreshcache.default,
+                "channels": dict(self.refreshcache.channels),
             },
             "render": {
                 "theme": self.render.theme,
@@ -398,10 +431,20 @@ def _parse_workbuddy(raw: Any) -> WorkbuddyConfig:
     if isinstance(raw_servers, (list, tuple)):
         for item in raw_servers:
             entry = _as_mapping(item)
-            name = normalize_name(_as_str(entry.get("name")))
+            raw_name = _as_str(entry.get("name"))
+            name = normalize_name(raw_name)
             base_url = _strip_trailing_slash(_as_str(entry.get("base_url")))
             if not name or not base_url or name in seen:
                 continue
+            if not valid_name(name):
+                raise ConfigError(
+                    f"workbuddy.servers 中网关名称非法：{raw_name}（1–{MAX_NAME_LEN} 字符，不能含空白或 / \\ :）"
+                )
+            if is_channel_name(name):
+                raise ConfigError(
+                    f"workbuddy.servers 网关名称不能与渠道名称同名：{raw_name}。"
+                    "请换一个名字（如 wb-main、wb-backup）。"
+                )
             seen.add(name)
             servers.append(
                 WorkbuddyServer(
@@ -424,6 +467,18 @@ def _parse_render(raw: Any) -> RenderConfig:
     return RenderConfig(theme=theme, cards_per_row=cards)
 
 
+def _parse_refreshcache(raw: Any) -> RefreshCacheConfig:
+    data = _as_mapping(raw)
+    default = max(0.0, _as_float(data.get("default"), DEFAULT_REFRESH_CACHE_TTL))
+    channels: dict[str, float] = {}
+    for key, value in _as_mapping(data.get("channels")).items():
+        canonical = normalize_channel(str(key))
+        if not canonical:
+            continue
+        channels[canonical] = max(0.0, _as_float(value, default))
+    return RefreshCacheConfig(default=default, channels=channels)
+
+
 def snapshot_from_raw(raw: Mapping[str, Any]) -> ConfigSnapshot:
     """把原始 JSON 字典转换为强类型快照。"""
     if not isinstance(raw, Mapping):
@@ -434,6 +489,7 @@ def snapshot_from_raw(raw: Mapping[str, Any]) -> ConfigSnapshot:
         volcengine=_parse_volcengine(raw.get("volcengine")),
         workbuddy=_parse_workbuddy(raw.get("workbuddy")),
         render=_parse_render(raw.get("render")),
+        refreshcache=_parse_refreshcache(raw.get("refreshcache")),
         aliases_file=aliases_file,
         raw=dict(raw),
     )

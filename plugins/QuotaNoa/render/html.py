@@ -385,7 +385,7 @@ def _bar_html(window: QuotaWindow) -> str:
     else:
         value_text = "可用"
 
-    zh_reset = format_reset_zh(window.reset_label)
+    zh_reset = window.reset_note or format_reset_zh(window.reset_label)
     reset_html = (
         f'<div class="bar-reset-hint">{html.escape(zh_reset)}</div>' if zh_reset else ""
     )

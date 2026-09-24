@@ -148,6 +148,8 @@ def parse_quota_accounts(payload: dict[str, Any], *, server_name: str) -> list[A
         packages = len(quotas)
         report.plan = f"{packages} 套餐"
         reset_ts = _earliest_recurring_reset(quotas)
+        reset_label = _reset_label(reset_ts)
+        reset_note = "" if reset_ts is None else f"最早的(空)套餐 {reset_label} 后过期"
         remaining_percent: float | None = None
         if total > 0:
             remaining_percent = max(0.0, min(100.0, remaining / total * 100.0))
@@ -158,8 +160,9 @@ def parse_quota_accounts(payload: dict[str, Any], *, server_name: str) -> list[A
                 remaining=float(remaining),
                 limit=float(total),
                 remaining_percent=remaining_percent,
-                reset_label=_reset_label(reset_ts),
+                reset_label=reset_label,
                 reset_at=reset_ts,
+                reset_note=reset_note,
                 direction="remaining",
             )
         ]

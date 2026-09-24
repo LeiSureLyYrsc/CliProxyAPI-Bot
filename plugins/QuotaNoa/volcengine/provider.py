@@ -7,12 +7,17 @@ from __future__ import annotations
 
 from .. import state
 from ..aliases import resolve_alias_for_keys
+from ..cache import board_key, boards
 from ..config import VolcengineAccount
 from ..model import AccountQuota, QuotaBoard, board_from_accounts
 from .client import VolcengineError, query_coding_plan_usage, query_personal_plan
 from .quota import account_from_usage, parse_personal_plan
 
 CHANNEL = "volcengine"
+
+
+def clear_cache() -> None:
+    boards.clear(f"{CHANNEL}:")
 
 
 async def _plan_of(account: VolcengineAccount) -> str:
@@ -24,9 +29,17 @@ async def _plan_of(account: VolcengineAccount) -> str:
     return parse_personal_plan(payload)
 
 
-async def collect_board(accounts: list[VolcengineAccount] | None = None) -> QuotaBoard:
+async def collect_board(
+    accounts: list[VolcengineAccount] | None = None, *, force: bool = False
+) -> QuotaBoard:
     """查询全部（或指定）火山账号，返回额度板。"""
     configs = list(accounts if accounts is not None else state.get_snapshot().volcengine.accounts)
+    key = board_key(CHANNEL, ",".join(account.name for account in configs))
+    if not force:
+        cached = boards.get(key)
+        if cached is not None:
+            cached.cached = True
+            return cached
     reports: list[AccountQuota] = []
     for account in configs:
         plan = await _plan_of(account)
@@ -46,4 +59,6 @@ async def collect_board(accounts: list[VolcengineAccount] | None = None) -> Quot
         if alias:
             report.name = alias
         reports.append(report)
-    return board_from_accounts(reports)
+    board = board_from_accounts(reports)
+    boards.set(key, board, state.get_snapshot().cache_ttl(CHANNEL))
+    return board

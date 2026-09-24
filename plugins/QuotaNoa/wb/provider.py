@@ -11,12 +11,17 @@ import asyncio
 
 from .. import state
 from ..aliases import resolve_alias_for_keys
+from ..cache import board_key, boards
 from ..config import WorkbuddyServer
 from ..model import AccountQuota, QuotaBoard, board_from_accounts
 from .client import WorkbuddyError, fetch_quota
 from .quota import parse_quota_accounts
 
 CHANNEL = "workbuddy"
+
+
+def clear_cache() -> None:
+    boards.clear(f"{CHANNEL}:")
 
 
 async def _server_reports(server: WorkbuddyServer) -> list[AccountQuota]:
@@ -42,11 +47,21 @@ async def _server_reports(server: WorkbuddyServer) -> list[AccountQuota]:
     return reports
 
 
-async def collect_board(servers: list[WorkbuddyServer] | None = None) -> QuotaBoard:
+async def collect_board(
+    servers: list[WorkbuddyServer] | None = None, *, force: bool = False
+) -> QuotaBoard:
     """查询全部（或指定）WorkBuddy 网关，返回聚合额度板。"""
     configs = list(servers if servers is not None else state.get_snapshot().workbuddy.servers)
+    key = board_key(CHANNEL, ",".join(server.name for server in configs))
+    if not force:
+        cached = boards.get(key)
+        if cached is not None:
+            cached.cached = True
+            return cached
     if not configs:
         return board_from_accounts([])
     grouped = await asyncio.gather(*(_server_reports(server) for server in configs))
     reports = [report for group in grouped for report in group]
-    return board_from_accounts(reports)
+    board = board_from_accounts(reports)
+    boards.set(key, board, state.get_snapshot().cache_ttl(CHANNEL))
+    return board
