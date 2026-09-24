@@ -70,7 +70,6 @@ telegram_bots=[{"token": "123456:ABC-DEF"}]
   "cpa": {
     "admins": [],                    // 额外管理员 user id（全局）
     "codex_refresh_admin": [],       // 全局
-    "quota_default_channels": [],     // 无参数 /quotanoa 默认查询的本地渠道；空=关（见下表）
     "instances": [                   // 每个实例独立连接与额度设置
       {
         "name": "Home",
@@ -109,7 +108,9 @@ telegram_bots=[{"token": "123456:ABC-DEF"}]
       "volcengine": 0
     }
   },
-  "render": { "theme": "default", "cards_per_row": 4 }
+  "render": { "theme": "default", "cards_per_row": 4 },
+  "quotanoa_additional_channel": [],  // /quotanoa 无参时在本地渠道之外追加的渠道（如 antigravity）
+  "cpa_additional_channel": []        // /cpa quota 无参时在全部 CPA 平台之外追加的渠道（如 qoder / workbuddy）
 }
 ```
 
@@ -117,7 +118,8 @@ telegram_bots=[{"token": "123456:ABC-DEF"}]
 | --- | --- |
 | `cpa.instances[]` | 每个 CLIProxyAPI 实例一项，自带 `base_url` / `management_key` / 超时 / 并发 / 缓存 / 图片开关。`base_url` 可写 `http://host:8317` 或带 `/v0/management` 的完整前缀 |
 | `cpa.admins` / `cpa.codex_refresh_admin` | 全局权限名单（与实例无关） |
-| `cpa.quota_default_channels` | 无参数查询默认渠道（仅本地渠道：`volcengine`/`workbuddy`/`qoder`）。默认 `[]`：`/quotanoa` 无参查全部本地渠道、`/cpa quota` 无参查全部 CPA 实例（非对称）；设为非空列表后两个入口都只查列表内渠道。`/quotanoa all` 始终查本地渠道 + 全部 CPA 实例 |
+| `quotanoa_additional_channel` | `/quotanoa` 无参默认查询的**追加渠道**：默认先查本地渠道（`volcengine`/`workbuddy`/`qoder`），再把这里的渠道追加在后。填 CPA 平台名（`claude`/`codex`/`antigravity`/`kimi`/`xai`/`gemini-cli`）即让 `/quotanoa` 也带出这些 CPA 额度 |
+| `cpa_additional_channel` | `/cpa quota` 无参默认查询的**追加渠道**：默认先查全部 CPA 平台，再把这里的渠道追加在后。填本地渠道名（`volcengine`/`workbuddy`/`qoder`）即让 `/cpa quota` 也带出这些本地额度 |
 | `volcengine.accounts` | 火山方舟 Coding Plan / Agent Plan 查询凭据（控制面 AccessKey，需 `ArkReadOnlyAccess`） |
 | `workbuddy.servers[]` | 每个 WorkBuddy2API 网关一项：`base_url`（如 `http://host:7863`）、`username` + `password`（控制台账号，插件自动登录换 `api_key`）、可选 `api_key`（跳过登录直连）、`timeout`。多个网关的账号会汇总到同一张 WorkBuddy 板，按网关名前缀区分 |
 | `qoder.servers[]` | 每个 Qoder2OAPI 代理一项：`name`、`base_url`（如 `http://127.0.0.1:8000`）、`api_key`、`timeout`。多个代理的号池账号会汇总到同一张 Qoder 板，按代理名前缀区分 |
@@ -138,8 +140,8 @@ Bot 与 CPA 不在同一台机器时，CPA 需要 `remote-management.allow-remot
 
 | 命令 | 作用 |
 | --- | --- |
-| `/quotanoa` | **默认**查询全部本地渠道（火山 / WorkBuddy / Qoder）；若配置了 `cpa.quota_default_channels` 则只查列表内渠道；多实例时 CPA 结果按 `[实例名]` 前缀区分 |
-| `/quotanoa all` | 查询**全部渠道**：本地渠道 + 全部 CPA 实例（同义 `--all` / `-a`） |
+| `/quotanoa` | **默认**先查本地渠道（火山 / WorkBuddy / Qoder），再追加 `quotanoa_additional_channel` 里的渠道；多实例时 CPA 结果按 `[实例名]` 前缀区分 |
+| `/quotanoa all` | 查询**全部渠道**：本地渠道 + 全部 CPA 平台（同义 `--all` / `-a`，与 `/cpa quota all` 内容一致） |
 | `/quotanoa help` | 查看帮助（同义 `--help` / `-h`） |
 | `/quotanoa <平台>` | 只看一个平台：`claude` / `codex`(gpt, openai) / `antigravity`(反重力, agy) / `kimi` / `xai` / `workbuddy`(wb) / `qoder` |
 | `/quotanoa 火山` | 查询火山方舟 Coding Plan + Agent Plan 额度（档位、用量、订阅到期；同义：`volc` / `volcengine` / `ark` / `火山方舟`） |
@@ -191,7 +193,7 @@ Bot 与 CPA 不在同一台机器时，CPA 需要 `remote-management.allow-remot
 | `cpa login <实例> <渠道>` | 启动 OAuth / 设备码。授权完成后把浏览器回调链接发回聊天（自动归属该实例） |
 | `cpa login callback <回调链接>` | 手动提交 localhost 回调 URL |
 | `cpa login cancel` | 取消当前登录 |
-| `cpa quota [平台] [实例] [--all] [--instance <实例>] [--fresh] [--text]` | 与 `/quotanoa` 同义：默认查询**全部 CPA 实例**（若配置 `cpa.quota_default_channels` 则改为查询列表内本地渠道）；`--all` 查询全部渠道，`cpa quota help` 查看帮助。例：`cpa quota xai JP-AI` 只查 JP-AI 的 xAI 额度 |
+| `cpa quota [平台] [实例] [--all] [--instance <实例>] [--fresh] [--text]` | 与 `/quotanoa` 同义：默认先查**全部 CPA 平台**，再追加 `cpa_additional_channel` 里的渠道（如 `qoder` / `workbuddy`）；`--all` 查询全部渠道，`cpa quota help` 查看帮助。例：`cpa quota xai JP-AI` 只查 JP-AI 的 xAI 额度 |
 
 查询词可以是 email、文件名、label、别名或 `auth_index`（含前缀）。列表和额度图优先显示别名；未设别名时用 `渠道-短索引`，避免把邮箱发到聊天。同邮箱出现在多个渠道时用 `/quotanoa alias set antigravity user@example.com AG-1`。WorkBuddy 账号也可绑别名：`/quotanoa alias set workbuddy <uid> <别名>`。详情 `cpa auth show` 仍会列出原始字段，便于对照。
 

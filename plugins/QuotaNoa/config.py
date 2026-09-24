@@ -24,7 +24,7 @@ from typing import Any, Mapping
 
 from pydantic import BaseModel, Field, field_validator
 
-from .model import LOCAL_CHANNELS, is_channel_name, normalize_channel
+from .model import is_channel_name, normalize_channel
 
 DEFAULT_CONFIG_FILE = "data/quotanoa_config.json"
 DEFAULT_ALIASES_FILE = "data/quotanoa_aliases.json"
@@ -189,7 +189,6 @@ class CpaConfig:
     admins: tuple[str, ...] = ()
     codex_refresh_admin: tuple[str, ...] = ()
     instances: tuple[CpaInstance, ...] = ()
-    quota_default_channels: tuple[str, ...] = ()
 
     def get(self, name: str) -> CpaInstance | None:
         """按名称取实例（名称已规范化）；不存在返回 None。"""
@@ -292,6 +291,10 @@ class ConfigSnapshot:
     qoder: QoderConfig = field(default_factory=QoderConfig)
     render: RenderConfig = field(default_factory=RenderConfig)
     refreshcache: RefreshCacheConfig = field(default_factory=RefreshCacheConfig)
+    #: ``/quotanoa`` 无参默认查询的额外渠道（在本地渠道之外追加）。
+    quotanoa_additional_channel: tuple[str, ...] = ()
+    #: ``/cpa quota`` 无参默认查询的额外渠道（在全部 CPA 平台之外追加）。
+    cpa_additional_channel: tuple[str, ...] = ()
     #: 别名文件路径；默认由本模块的 ``DEFAULT_ALIASES_FILE`` 决定，
     #: JSON 里的 ``aliases_file`` 仅作可选覆盖（旧配置兼容），不再写入生成文件。
     aliases_file: str = DEFAULT_ALIASES_FILE
@@ -317,7 +320,6 @@ class ConfigSnapshot:
             "cpa": {
                 "admins": list(self.cpa.admins),
                 "codex_refresh_admin": list(self.cpa.codex_refresh_admin),
-                "quota_default_channels": list(self.cpa.quota_default_channels),
                 "instances": [
                     {
                         "name": instance.name,
@@ -377,6 +379,8 @@ class ConfigSnapshot:
                 "theme": self.render.theme,
                 "cards_per_row": self.render.cards_per_row,
             },
+            "quotanoa_additional_channel": list(self.quotanoa_additional_channel),
+            "cpa_additional_channel": list(self.cpa_additional_channel),
         }
 
 
@@ -412,13 +416,13 @@ def _parse_cpa_instance(entry: Any) -> CpaInstance | None:
     )
 
 
-def _parse_default_channels(value: Any) -> tuple[str, ...]:
-    """解析 /quotanoa 默认渠道：只保留本地渠道（CPA 渠道靠显式参数或 all）。"""
+def _parse_additional_channels(value: Any) -> tuple[str, ...]:
+    """解析额外渠道列表：归一到 canonical 渠道名，去重，丢弃未知项。"""
     cleaned: list[str] = []
     seen: set[str] = set()
     for item in _as_str_list(value):
         canonical = normalize_channel(item)
-        if not canonical or canonical not in LOCAL_CHANNELS or canonical in seen:
+        if not canonical or canonical in seen:
             continue
         seen.add(canonical)
         cleaned.append(canonical)
@@ -443,7 +447,6 @@ def _parse_cpa(raw: Any) -> CpaConfig:
         admins=_as_str_list(data.get("admins")),
         codex_refresh_admin=_as_str_list(data.get("codex_refresh_admin")),
         instances=tuple(instances),
-        quota_default_channels=_parse_default_channels(data.get("quota_default_channels")),
     )
 
 
@@ -574,6 +577,10 @@ def snapshot_from_raw(raw: Mapping[str, Any]) -> ConfigSnapshot:
         qoder=_parse_qoder(raw.get("qoder")),
         render=_parse_render(raw.get("render")),
         refreshcache=_parse_refreshcache(raw.get("refreshcache")),
+        quotanoa_additional_channel=_parse_additional_channels(
+            raw.get("quotanoa_additional_channel")
+        ),
+        cpa_additional_channel=_parse_additional_channels(raw.get("cpa_additional_channel")),
         aliases_file=aliases_file,
         raw=dict(raw),
     )

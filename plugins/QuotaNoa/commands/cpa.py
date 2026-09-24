@@ -210,7 +210,7 @@ def _cpa_help_text(providers: str) -> str:
             "  cpa login callback <回调链接>",
             "  cpa login cancel",
             "",
-            "【额度】默认查询全部 CPA 实例（若配置 cpa.quota_default_channels 则查指定本地渠道）。",
+            "【额度】默认查询全部 CPA 平台，可用 cpa_additional_channel 追加渠道（如 qoder / workbuddy）。",
             "  cpa quota [平台] [实例] [--instance <实例>] [--fresh] [--text]",
             "    例：cpa quota xai JP-AI   只查 JP-AI 实例的 xAI 额度",
             "        cpa quota xai         查全部实例的 xAI 额度",

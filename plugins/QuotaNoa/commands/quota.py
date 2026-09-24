@@ -5,12 +5,13 @@
 从 plaintext 解析，因此根上不再声明 --fresh/--text/--instance 等 Option，
 避免 `$main` 因 components 非空而不触发。
 
-多实例：默认查询全部 CPA 实例并按实例名加前缀展示；``--instance <名>``
-或位置参数里的实例名可限定到单个实例。
+多实例：默认查询按入口的主渠道优先展示（/quotanoa 本地渠道、/cpa quota 全部 CPA 平台），
+并按实例名加前缀区分；``--instance <名>`` 或位置参数里的实例名可限定到单个实例。
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 from arclet.alconna import Alconna, Args, CommandMeta, MultiVar, Option, Subcommand, store_true
@@ -30,7 +31,7 @@ from ..cpa.quota import (
     peek_quota_cache,
     platform_of,
 )
-from ..model import LOCAL_CHANNELS
+from ..model import LOCAL_CHANNELS, normalize_channel
 from ..query import QuotaSelection, parse_quota_command, strip_quota_head, tokenize
 from ..render.html import RenderError, render_board_images
 from ..volcengine.provider import collect_board as collect_volcengine_board
@@ -42,6 +43,9 @@ from .common import CPA_ADMIN, _require_one_across, _text, _without
 #: /quotanoa all 与默认查询使用的本地渠道顺序。
 LOCAL_CHANNEL_LABELS = {"volcengine": "火山", "workbuddy": "WorkBuddy", "qoder": "Qoder"}
 
+#: 本地渠道集合（与 ``model.LOCAL_CHANNELS`` 一致）。
+_LOCAL_CHANNEL_SET = frozenset(LOCAL_CHANNELS)
+
 #: 触发帮助的查询词（裸命令不再显示帮助）。
 HELP_TOKENS = {"help", "--help", "-h"}
 
@@ -51,17 +55,57 @@ def _is_help_request(parts: Sequence[str]) -> bool:
     return len(parts) == 1 and parts[0].lower() in HELP_TOKENS
 
 
-def _resolve_default_channels(configured: Sequence[str], entry: str) -> tuple[str, ...] | None:
-    """无参数查询默认渠道集；返回 None 表示走全部 CPA 实例（现状）。
+# --------------------------------------------------------------------------- #
+# 无参默认查询计划
+# --------------------------------------------------------------------------- #
 
-    - 配置 cpa.quota_default_channels 非空：两个入口都只查列表内本地渠道。
-    - 配置为空：非对称——/quotanoa 默认查全部本地渠道，/cpa quota 默认查全部 CPA 实例。
+
+@dataclass(frozen=True)
+class _QueryUnit:
+    """默认查询计划中的一个查询单元。
+
+    - ``local``：查询单个本地渠道（``channel`` 为本地渠道名）。
+    - ``cpa_all``：查询全部 CPA 实例的全部平台。
+    - ``cpa_platform``：查询全部 CPA 实例中 ``channel`` 对应平台的部分。
     """
-    if configured:
-        return tuple(configured)
-    if entry != "cpa":
-        return tuple(LOCAL_CHANNELS)
-    return None
+
+    kind: str
+    channel: str = ""
+
+
+def _all_channels_plan() -> list[_QueryUnit]:
+    """全部渠道：本地渠道在前，随后全部 CPA 平台（/quotanoa all 与 /cpa quota all 共用）。"""
+    return [*(_QueryUnit("local", ch) for ch in LOCAL_CHANNELS), _QueryUnit("cpa_all")]
+
+
+def _resolve_query_plan(configured, entry: str) -> list[_QueryUnit]:
+    """按入口解析无参默认查询计划（有序）。
+
+    主渠道在前，配置的额外渠道追加在后；已被主渠道覆盖的额外渠道自动去重：
+
+    - ``/quotanoa``：本地渠道（火山 / WorkBuddy / Qoder）在前，
+      再叠加 ``quotanoa_additional_channel`` 里的额外渠道。
+    - ``/cpa quota``：全部 CPA 平台在前，
+      再叠加 ``cpa_additional_channel`` 里的额外本地渠道。
+    """
+    if entry == "cpa":
+        units: list[_QueryUnit] = [_QueryUnit("cpa_all")]
+        for raw in configured:
+            channel = normalize_channel(raw)
+            # 全部 CPA 平台已覆盖 CPA 渠道，只需追加本地渠道。
+            if channel and channel in _LOCAL_CHANNEL_SET:
+                units.append(_QueryUnit("local", channel))
+        return units
+    units = [_QueryUnit("local", ch) for ch in LOCAL_CHANNELS]
+    seen_cpa: set[str] = set()
+    for raw in configured:
+        channel = normalize_channel(raw)
+        # 本地渠道已在默认集中，只有 CPA 渠道需要额外查询。
+        if not channel or channel in _LOCAL_CHANNEL_SET or channel in seen_cpa:
+            continue
+        seen_cpa.add(channel)
+        units.append(_QueryUnit("cpa_platform", channel))
+    return units
 
 
 # --------------------------------------------------------------------------- #
@@ -197,8 +241,12 @@ async def quota_entry(event: Event, *, entry: str = "quota") -> None:
     """共享入口：/quotanoa 与 /cpa quota 复用。
 
     ``entry`` 区分入口（"quota" / "cpa"），决定无参数时的默认渠道集：
-    配置 cpa.quota_default_channels 非空时两个入口都只查列表内本地渠道；
-    为空时非对称：/quotanoa 默认查全部本地渠道，/cpa quota 默认查全部 CPA 实例。
+
+    - /quotanoa：本地渠道（火山 / WorkBuddy / Qoder）优先，
+      再叠加 ``quotanoa_additional_channel`` 的额外渠道；
+    - /cpa quota：全部 CPA 平台优先，
+      再叠加 ``cpa_additional_channel`` 的额外渠道。
+
     查询：/quotanoa help（或 --help / -h）显示帮助。
     """
     if _is_help_request(strip_quota_head(tokenize(event.get_plaintext()))):
@@ -217,12 +265,12 @@ def _quota_help_text() -> str:
             "QuotaNoa 额度查询（仅超级用户 / admins）",
             "命令固定带 / 前缀（指令头）。",
             "",
-            "【查询】默认查询本地渠道（火山 / WorkBuddy / Qoder）；多实例时 CPA 结果按 [实例名] 前缀区分。",
+            "【查询】默认优先展示本地渠道（火山 / WorkBuddy / Qoder）；多实例时 CPA 结果按 [实例名] 前缀区分。",
             "  /quotanoa",
-            "    无参数：查询全部本地渠道（火山 / WorkBuddy / Qoder）。",
-            "    若配置了 cpa.quota_default_channels，则只查列表内渠道。",
+            "    无参数：本地渠道（火山 / WorkBuddy / Qoder）+ quotanoa_additional_channel 追加的渠道。",
+            "    /cpa quota 无参：全部 CPA 平台 + cpa_additional_channel 追加的渠道。",
             "  /quotanoa all",
-            "    查询全部渠道：本地渠道 + 全部 CPA 实例（同义 --all / -a）。",
+            "    查询全部渠道：本地渠道 + 全部 CPA 平台（同义 --all / -a）。",
             "  /quotanoa help",
             "    查看本帮助（同义 --help / -h）。",
             "  /quotanoa <平台>",
@@ -447,14 +495,16 @@ async def quota_view(event: Event, *, entry: str = "quota") -> None:
     if selection.platform == "qoder":
         await _send_qoder_results(snapshot.cpa, selection)
         return
-    if selection.all_channels and not selection.platform:
-        await _send_channels(snapshot, LOCAL_CHANNELS, include_cpa=True, selection=selection)
+    if selection.all_channels and not (selection.platform or selection.instance or selection.account):
+        await _send_plan(snapshot, _all_channels_plan(), selection=selection)
         return
     if not (selection.platform or selection.instance or selection.account):
-        channels = _resolve_default_channels(snapshot.cpa.quota_default_channels, entry)
-        if channels is not None:
-            await _send_channels(snapshot, channels, include_cpa=False, selection=selection)
-            return
+        if entry == "cpa":
+            plan = _resolve_query_plan(snapshot.cpa_additional_channel, entry)
+        else:
+            plan = _resolve_query_plan(snapshot.quotanoa_additional_channel, entry)
+        await _send_plan(snapshot, plan, selection=selection)
+        return
     targets = _quota_targets(selection)
     if targets is None:
         return
@@ -576,42 +626,78 @@ def _no_channel_configured_text() -> str:
     )
 
 
-async def _send_channels(
+async def _send_plan(
     snapshot,
-    channels: Sequence[str],
+    plan: Sequence[_QueryUnit],
     *,
-    include_cpa: bool,
     selection: QuotaSelection,
 ) -> None:
-    """按渠道集合发送额度：本地渠道 + 可选全部 CPA 实例。"""
+    """按查询计划发送额度：本地渠道与 CPA 平台按计划顺序排列。"""
     cpa = snapshot.cpa
-    wanted_local = [ch for ch in channels if ch in LOCAL_CHANNELS]
-    cpa_targets = list(cpa.names()) if include_cpa else []
-    if not wanted_local and not cpa_targets:
+    instances = list(cpa.names())
+    has_local_unit = any(unit.kind == "local" for unit in plan)
+    if not instances and not has_local_unit:
         await UniMessage(_no_channel_configured_text()).finish()
         return
     results: list[tuple[str, QuotaBoard | str]] = []
     await UniMessage("正在查询额度，可能需要几秒…").send()
-    for channel in wanted_local:
-        label = LOCAL_CHANNEL_LABELS.get(channel, channel)
-        try:
-            board = await _local_channel_board(snapshot, channel, force=selection.fresh)
-        except Exception as exc:  # noqa: BLE001 - 单渠道异常不阻断其它渠道
-            results.append((label, f"额度查询失败：{exc}"))
+    for unit in plan:
+        if unit.kind == "local":
+            label = LOCAL_CHANNEL_LABELS.get(unit.channel, unit.channel)
+            try:
+                board = await _local_channel_board(snapshot, unit.channel, force=selection.fresh)
+            except Exception as exc:  # noqa: BLE001 - 单渠道异常不阻断其它渠道
+                results.append((label, f"额度查询失败：{exc}"))
+                continue
+            if board is None or not board.platforms:
+                continue
+            results.append((label, board))
             continue
-        if board is None or not board.platforms:
-            continue
-        results.append((label, board))
-    for name in cpa_targets:
-        try:
-            board = await _instance_quota_board(name, selection)
+        # CPA：全部平台或限定单一平台；无对应凭证的实例静默跳过。
+        platform = unit.channel if unit.kind == "cpa_platform" else ""
+        for name in instances:
+            try:
+                board = await _plan_instance_board(name, platform, selection)
+            except CPAError as exc:
+                results.append((name, str(exc)))
+                continue
+            if board is None:
+                continue
             results.append((name, board))
-        except CPAError as exc:
-            results.append((name, str(exc)))
     if not results:
         await UniMessage(_no_channel_configured_text()).finish()
         return
     await _send_quota_results(cpa, results, want_text=selection.text, multi=len(results) > 1)
+
+
+async def _plan_instance_board(
+    instance: str,
+    platform: str,
+    selection: QuotaSelection,
+) -> QuotaBoard | None:
+    """默认计划用：查询某实例（可限定平台）；无匹配凭证时返回 ``None``。"""
+    files = await get_client(instance).list_auth_files()
+    target = [item for item in files if platform_of(item) == platform] if platform else files
+    if platform and not target:
+        return None
+    force = selection.fresh
+    platform_filter = platform or None
+    board = (
+        None
+        if force
+        else peek_quota_cache(
+            target, instance=instance, platform=platform_filter, skip_disabled=True
+        )
+    )
+    if board is None:
+        board = await collect_quotas(
+            target,
+            instance=instance,
+            platform=platform_filter,
+            force=force,
+            skip_disabled=True,
+        )
+    return board
 
 
 def _custom_channel_keywords() -> dict[str, str]:
