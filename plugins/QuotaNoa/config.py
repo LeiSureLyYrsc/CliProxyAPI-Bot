@@ -24,13 +24,13 @@ from typing import Any, Mapping
 
 from pydantic import BaseModel, Field, field_validator
 
-from .model import is_channel_name, normalize_channel
+from .model import LOCAL_CHANNELS, is_channel_name, normalize_channel
 
 DEFAULT_CONFIG_FILE = "data/quotanoa_config.json"
 DEFAULT_ALIASES_FILE = "data/quotanoa_aliases.json"
 
 DEFAULT_THEME = "default"
-DEFAULT_CARDS_PER_ROW = 4
+DEFAULT_CARDS_PER_ROW = 3
 MIN_CARDS_PER_ROW = 1
 MAX_CARDS_PER_ROW = 6
 
@@ -189,6 +189,7 @@ class CpaConfig:
     admins: tuple[str, ...] = ()
     codex_refresh_admin: tuple[str, ...] = ()
     instances: tuple[CpaInstance, ...] = ()
+    quota_default_channels: tuple[str, ...] = ()
 
     def get(self, name: str) -> CpaInstance | None:
         """按名称取实例（名称已规范化）；不存在返回 None。"""
@@ -316,6 +317,7 @@ class ConfigSnapshot:
             "cpa": {
                 "admins": list(self.cpa.admins),
                 "codex_refresh_admin": list(self.cpa.codex_refresh_admin),
+                "quota_default_channels": list(self.cpa.quota_default_channels),
                 "instances": [
                     {
                         "name": instance.name,
@@ -410,6 +412,19 @@ def _parse_cpa_instance(entry: Any) -> CpaInstance | None:
     )
 
 
+def _parse_default_channels(value: Any) -> tuple[str, ...]:
+    """解析 /quota 默认渠道：只保留本地渠道（CPA 渠道靠显式参数或 all）。"""
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for item in _as_str_list(value):
+        canonical = normalize_channel(item)
+        if not canonical or canonical not in LOCAL_CHANNELS or canonical in seen:
+            continue
+        seen.add(canonical)
+        cleaned.append(canonical)
+    return tuple(cleaned)
+
+
 def _parse_cpa(raw: Any) -> CpaConfig:
     data = _as_mapping(raw)
     raw_instances = data.get("instances")
@@ -428,6 +443,7 @@ def _parse_cpa(raw: Any) -> CpaConfig:
         admins=_as_str_list(data.get("admins")),
         codex_refresh_admin=_as_str_list(data.get("codex_refresh_admin")),
         instances=tuple(instances),
+        quota_default_channels=_parse_default_channels(data.get("quota_default_channels")),
     )
 
 

@@ -70,6 +70,7 @@ telegram_bots=[{"token": "123456:ABC-DEF"}]
   "cpa": {
     "admins": [],                    // 额外管理员 user id（全局）
     "codex_refresh_admin": [],       // 全局
+    "quota_default_channels": [],     // 无参数 /quota 默认查询的本地渠道；空=关（见下表）
     "instances": [                   // 每个实例独立连接与额度设置
       {
         "name": "Home",
@@ -116,7 +117,8 @@ telegram_bots=[{"token": "123456:ABC-DEF"}]
 | --- | --- |
 | `cpa.instances[]` | 每个 CLIProxyAPI 实例一项，自带 `base_url` / `management_key` / 超时 / 并发 / 缓存 / 图片开关。`base_url` 可写 `http://host:8317` 或带 `/v0/management` 的完整前缀 |
 | `cpa.admins` / `cpa.codex_refresh_admin` | 全局权限名单（与实例无关） |
-| `volcengine.accounts` | 火山方舟 Coding Plan 查询凭据（控制面 AccessKey，需 `ArkReadOnlyAccess`） |
+| `cpa.quota_default_channels` | 无参数查询默认渠道（仅本地渠道：`volcengine`/`workbuddy`/`qoder`）。默认 `[]`：`/quota` 无参查全部本地渠道、`/cpa quota` 无参查全部 CPA 实例（非对称）；设为非空列表后两个入口都只查列表内渠道。`/quota all` 始终查本地渠道 + 全部 CPA 实例 |
+| `volcengine.accounts` | 火山方舟 Coding Plan / Agent Plan 查询凭据（控制面 AccessKey，需 `ArkReadOnlyAccess`） |
 | `workbuddy.servers[]` | 每个 WorkBuddy2API 网关一项：`base_url`（如 `http://host:7863`）、`username` + `password`（控制台账号，插件自动登录换 `api_key`）、可选 `api_key`（跳过登录直连）、`timeout`。多个网关的账号会汇总到同一张 WorkBuddy 板，按网关名前缀区分 |
 | `qoder.servers[]` | 每个 Qoder2OAPI 代理一项：`name`、`base_url`（如 `http://127.0.0.1:8000`）、`api_key`、`timeout`。多个代理的号池账号会汇总到同一张 Qoder 板，按代理名前缀区分 |
 | `refreshcache` | 各渠道查询结果的缓存秒数：`default` 为兜底，`channels` 按渠道名覆盖（支持别名如 `gpt`/`火山` 归一）。CPA 实例未命中渠道覆盖时回退到实例 `quota_cache_ttl`；`0` 表示该渠道不缓存。`/quota --fresh` 仍强制重查 |
@@ -136,9 +138,11 @@ Bot 与 CPA 不在同一台机器时，CPA 需要 `remote-management.allow-remot
 
 | 命令 | 作用 |
 | --- | --- |
-| `/quota` | **全部 CPA 实例**全平台额度汇总；无参数时显示帮助。多实例时按 `[实例名]` 前缀区分 |
+| `/quota` | **默认**查询全部本地渠道（火山 / WorkBuddy / Qoder）；若配置了 `cpa.quota_default_channels` 则只查列表内渠道；多实例时 CPA 结果按 `[实例名]` 前缀区分 |
+| `/quota all` | 查询**全部渠道**：本地渠道 + 全部 CPA 实例（同义 `--all` / `-a`） |
+| `/quota help` | 查看帮助（同义 `--help` / `-h`） |
 | `/quota <平台>` | 只看一个平台：`claude` / `codex`(gpt, openai) / `antigravity`(反重力, agy) / `kimi` / `xai` / `workbuddy`(wb) / `qoder` |
-| `/quota 火山` | 查询火山方舟 Coding Plan 额度（同义：`volc` / `volcengine` / `ark` / `火山方舟`） |
+| `/quota 火山` | 查询火山方舟 Coding Plan + Agent Plan 额度（档位、用量、订阅到期；同义：`volc` / `volcengine` / `ark` / `火山方舟`） |
 | `/quota workbuddy` | 查询全部 WorkBuddy 网关的积分额度（同义：`wb`） |
 | `/quota qoder` | 查询全部 Qoder2OAPI 代理的号池额度（同义：`qd`） |
 | `/quota <实例>` | 只查指定 CPA 实例。例：`/quota Home` |
@@ -187,7 +191,7 @@ Bot 与 CPA 不在同一台机器时，CPA 需要 `remote-management.allow-remot
 | `cpa login <实例> <渠道>` | 启动 OAuth / 设备码。授权完成后把浏览器回调链接发回聊天（自动归属该实例） |
 | `cpa login callback <回调链接>` | 手动提交 localhost 回调 URL |
 | `cpa login cancel` | 取消当前登录 |
-| `cpa quota [平台] [实例] [--instance <实例>] [--fresh] [--text]` | 与 `/quota` 同义：默认查询**全部实例**。例：`cpa quota xai JP-AI` 只查 JP-AI 的 xAI 额度 |
+| `cpa quota [平台] [实例] [--all] [--instance <实例>] [--fresh] [--text]` | 与 `/quota` 同义：默认查询**全部 CPA 实例**（若配置 `cpa.quota_default_channels` 则改为查询列表内本地渠道）；`--all` 查询全部渠道，`cpa quota help` 查看帮助。例：`cpa quota xai JP-AI` 只查 JP-AI 的 xAI 额度 |
 
 查询词可以是 email、文件名、label、别名或 `auth_index`（含前缀）。列表和额度图优先显示别名；未设别名时用 `渠道-短索引`，避免把邮箱发到聊天。同邮箱出现在多个渠道时用 `/quota alias set antigravity user@example.com AG-1`。WorkBuddy 账号也可绑别名：`/quota alias set workbuddy <uid> <别名>`。详情 `cpa auth show` 仍会列出原始字段，便于对照。
 
@@ -209,7 +213,7 @@ WorkBuddy 卡片/文字里的倒计时是**重置**语义，固定显示为 `最
 
 ## 额度说明
 
-CLIProxyAPI **没有**账号池额度聚合接口。`GET /auth-files` 只有健康 / 冷却状态。`/quota` 的 CPA 部分和管理台 Quota 页同一思路：按 `provider` 分组后，用内部白名单 `POST /v0/management/api-call` 打各平台用量接口（`$TOKEN$` 由 CPA 替换）。聊天里**不会**开放通用代发。火山方舟部分则直接用控制面 OpenAPI（SigV4 签名）查询 `GetCodingPlanUsage`。
+CLIProxyAPI **没有**账号池额度聚合接口。`GET /auth-files` 只有健康 / 冷却状态。`/quota` 的 CPA 部分和管理台 Quota 页同一思路：按 `provider` 分组后，用内部白名单 `POST /v0/management/api-call` 打各平台用量接口（`$TOKEN$` 由 CPA 替换）。聊天里**不会**开放通用代发。火山方舟部分则直接用控制面 OpenAPI（SigV4 签名）查询 `GetCodingPlanUsage` 与 `GetAFPUsage`。
 
 默认跳过 `disabled` 凭证，与管理台「8 个文件 / 6 个参与额度」一致。
 
@@ -225,7 +229,7 @@ CLIProxyAPI **没有**账号池额度聚合接口。`GET /auth-files` 只有健�
 
 默认用 Playwright 把同一平台的账号卡合并成一张图发送（视觉对齐管理台 Quota 页，不含 Refresh / 时间轴）。超过 8 个账号会拆成多张。出图函数 `render_platform_images` / `render_board_images` 不依赖聊天会话，以后做定时推送可以直接复用。
 
-多实例下，账号卡标题与文字总览都会带 **`[CPA 实例名]` 前缀**（如 `[JP-AI] Murasame…`），便于区分额度来自哪个实例；实例标签限长 8 字符、账号名限长 16 字符，超长以 `…` 截断，完整名称保留在悬浮提示里。火山方舟账号为本地渠道（无 CPA 实例），不加前缀，其卡片会额外显示 **套餐档位徽章**（`Lite` / `Pro`，来自 `GetPersonalPlan`）。
+多实例下，账号卡标题与文字总览都会带 **`[CPA 实例名]` 前缀**（如 `[JP-AI] Murasame…`），便于区分额度来自哪个实例；实例标签限长 8 字符、账号名限长 16 字符，超长以 `…` 截断，完整名称保留在悬浮提示里。火山方舟账号为本地渠道（无 CPA 实例），不加前缀；若同时开通 Coding 与 Agent Plan，会拆分为**两张独立卡片**（Coding 卡片与 Agent 卡片），各自带有专属档位徽章（如 `Coding Lite`、`Agent Small`）与订阅到期徽章（`Coding 到期 …`、`Agent 到期 …`）。无论在账号卡片还是汇总/合计视图中，均统一以套餐名作为分组标题（Coding 在前、Agent 在后），内部额度行显示简洁的 `5h`/`周`/`月`（Agent 视用量自适应展示 `日`）；文字模式下合计行按 `Coding：`/`Agent：` 分组缩进展示。其中 Agent Plan 的日额度为视觉模型专用硬顶，无消耗时自动隐藏，产生用量后才浮现。
 
 ## 主题资源包
 
@@ -265,7 +269,7 @@ themes/<主题名>/
 
 未安装 Chromium 时会自动回退文字，并提示执行 `playwright install chromium`（推荐：`uv run playwright install chromium`）。`cpa.quota_image=false` 或 `/quota --text` 可强制只要文字。
 
-支持的上游：Claude OAuth usage、Codex WHAM usage、Antigravity `retrieveUserQuotaSummary` + `loadCodeAssist`（套餐）、Kimi usages、xAI billing credits、**火山方舟 Coding Plan**（控制面 `GetCodingPlanUsage`）、**WorkBuddy2API**（`GET /v1/quota`，聚合积分 + 套餐数）、**Qoder2OAPI**（`GET /v1/dashboard/billing/credits`，号池聚合 + 每账号 general/addon/dedicated 分桶；账号 `user_type` 会映射为订阅档位：个人 = 体验版 / 专业版 / 高级版 / 旗舰版，企业 = 团队版 / 企业标准版，兼容 `personal_professional` 与 `PLAN_TIER_*` / `ORGANIZATION_PLAN_TIER_*` 两种写法）。Antigravity 的 `account_type=oauth` 只是登录方式，套餐来自 `paidTier`（Pro / Plus / Ultra）。未知 / API-key 渠道只显示本地健康状态。
+支持的上游：Claude OAuth usage、Codex WHAM usage、Antigravity `retrieveUserQuotaSummary` + `loadCodeAssist`（套餐）、Kimi usages、xAI billing credits、**火山方舟 Coding Plan / Agent Plan**（控制面 `GetCodingPlanUsage` 与 `GetAFPUsage`）、**WorkBuddy2API**（`GET /v1/quota`，聚合积分 + 套餐数）、**Qoder2OAPI**（`GET /v1/dashboard/billing/credits`，号池聚合 + 每账号 general/addon/dedicated 分桶；账号 `user_type` 会映射为订阅档位：个人 = 体验版 / 专业版 / 高级版 / 旗舰版，企业 = 团队版 / 企业标准版，兼容 `personal_professional` 与 `PLAN_TIER_*` / `ORGANIZATION_PLAN_TIER_*` 两种写法）。Antigravity 的 `account_type=oauth` 只是登录方式，套餐来自 `paidTier`（Pro / Plus / Ultra）。未知 / API-key 渠道只显示本地健康状态。
 
 火山方舟凭据请用**控制面 OpenAPI** 的 AccessKey ID + SecretAccessKey（`volcengine.accounts[]`，需子账户具备 `ArkReadOnlyAccess` 权限），**不是**推理 Key（`ark-...` 查不了额度）。Bot 直接对 `open.volcengineapi.com` 做 SigV4 签名请求。
 

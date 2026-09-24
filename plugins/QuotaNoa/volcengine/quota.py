@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 from ..config import VolcengineAccount
@@ -112,46 +113,174 @@ def parse_coding_plan_usage(payload: dict[str, Any]) -> tuple[list[QuotaWindow],
     return windows, status
 
 
+_AGENT_WINDOWS = (
+    ("AFPFiveHour", "volc-agent-5h", "5h"),
+    ("AFPWeekly", "volc-agent-week", "周"),
+    ("AFPMonthly", "volc-agent-month", "月"),
+    ("AFPDaily", "volc-agent-day", "日"),
+)
+
+
+def parse_agent_plan_usage(payload: dict[str, Any]) -> list[QuotaWindow]:
+    """解析 GetAFPUsage 响应为 Agent Plan 窗口（5h/周/月/日），方向为"已用"。"""
+    result = payload.get("Result") if isinstance(payload, dict) else None
+    if not isinstance(result, dict):
+        return []
+    windows: list[QuotaWindow] = []
+    for field, window_id, label in _AGENT_WINDOWS:
+        item = result.get(field)
+        if not isinstance(item, dict):
+            continue
+        quota = _num(item.get("Quota"))
+        used = _num(item.get("Used"))
+        if quota is None or quota <= 0 or used is None:
+            continue
+        if field == "AFPDaily" and used <= 0:
+            # AFPDaily 是「视觉/生图/视频模型专用」的每日硬顶（Quota 常高于周额度），
+            # 纯文本/编程用量不会消耗它，故 Used 恒为 0；无消耗时不展示，避免误导性的 0% 条目。
+            # 一旦产生视觉模型日消耗即自动出现，实现按档位/用量自适应。
+            continue
+        used_percent = max(0.0, min(100.0, used / quota * 100.0))
+        reset_ts = _num(item.get("ResetTime"))
+        if reset_ts is not None and reset_ts > 1e11:
+            reset_ts = reset_ts / 1000.0
+        windows.append(QuotaWindow(
+            id=window_id, label=label, used_percent=used_percent,
+            remaining_percent=max(0.0, 100.0 - used_percent),
+            reset_label=_reset_label(reset_ts), reset_at=reset_ts, direction="used",
+        ))
+    return windows
+
+
+def _iso_epoch(value: Any) -> float | None:
+    if not value or not isinstance(value, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.timestamp()
+
+
+def parse_plan(payload: dict[str, Any]) -> dict[str, Any]:
+    """解析 GetPersonalPlan 响应为 {plan_type,status,start_at,end_at,auto_renew}；无套餐返回 {}。"""
+    if not isinstance(payload, dict):
+        return {}
+    result = payload.get("Result")
+    if not isinstance(result, dict):
+        return {}
+    info: dict[str, Any] = {}
+    for key in ("PlanType", "plan_type", "Plan", "plan"):
+        value = result.get(key)
+        if value:
+            info["plan_type"] = str(value).strip()
+            break
+    status = result.get("Status")
+    if status:
+        info["status"] = str(status)
+    for out_key, in_key in (("start_at", "StartTime"), ("end_at", "EndTime")):
+        epoch = _iso_epoch(result.get(in_key))
+        if epoch is not None:
+            info[out_key] = epoch
+    auto = result.get("AutoRenew")
+    if isinstance(auto, bool):
+        info["auto_renew"] = auto
+    return info
+
+
+def format_expiry_label(ts: float) -> str:
+    """到期时间：本地日期 + 剩余倒计时，如 `2026-10-23 (剩28天12小时)`。"""
+    dt = datetime.fromtimestamp(ts).astimezone()
+    date_str = dt.strftime("%Y-%m-%d")
+    diff = ts - time.time()
+    if diff <= 0:
+        return f"{date_str} (已过期)"
+    secs = int(diff)
+    days, rem = divmod(secs, 86400)
+    hours, _ = divmod(rem, 3600)
+    if days > 0:
+        rel = f"{days}天{hours}小时" if hours else f"{days}天"
+    elif hours > 0:
+        rel = f"{hours}小时"
+    else:
+        rel = "不足1小时"
+    return f"{date_str} (剩{rel})"
+
+
 def parse_personal_plan(payload: dict[str, Any]) -> str:
     """从 ``GetPersonalPlan`` 响应里提取套餐档位名（如 ``Lite`` / ``Pro``）。
 
     无 ``Result`` / ``PlanType`` 时返回空串（视为无套餐）。
     """
-    if not isinstance(payload, dict):
-        return ""
-    result = payload.get("Result")
-    if not isinstance(result, dict):
-        return ""
-    for key in ("PlanType", "plan_type", "Plan", "plan"):
-        value = result.get(key)
-        if value:
-            return str(value).strip()
-    return ""
+    return parse_plan(payload).get("plan_type", "")
 
 
-def account_from_usage(
+def _build_report(
     account: VolcengineAccount,
-    payload: dict[str, Any],
-    *,
-    plan: str = "",
+    kind: str,
+    plan_info: dict[str, Any] | None,
+    windows: list[QuotaWindow],
+    status: str,
 ) -> AccountQuota:
-    """把单个火山账号的额度响应转为统一账号额度对象。
-
-    ``plan`` 来自 ``GetPersonalPlan`` 的档位名（Lite / Pro），仅用于卡片徽章展示。
-    """
-    windows, status = parse_coding_plan_usage(payload)
+    """构造单张计划卡（kind ∈ {"coding","agent"}）：一种套餐一张卡。"""
+    tier = str((plan_info or {}).get("plan_type") or "").strip()
+    label = f"{kind.capitalize()} {tier}".strip()
+    plan_badges = [(kind, label)] if (tier or windows) else []
+    subscription_badges: list[tuple[str, str]] = []
+    end_ts = (plan_info or {}).get("end_at")
+    if end_ts:
+        subscription_badges.append(
+            (kind, f"{kind.capitalize()} 到期 {format_expiry_label(float(end_ts))}")
+        )
     report = AccountQuota(
         platform="volcengine",
         name=account.name,
         auth_index="",
-        plan=plan or "",
+        plan=label if plan_badges else "",
+        plan_badges=plan_badges,
+        subscription_badges=subscription_badges,
         status=status or "unknown",
+        windows=list(windows),
     )
-    if not windows:
-        report.status = status or "error"
-        if status and status.lower() != "running":
-            report.error = f"套餐状态：{status}"
-        return report
-    report.windows = windows
-    report.status = "ok" if (status or "running").lower() == "running" else status
+    if report.windows:
+        report.status = "ok"
     return report
+
+
+def accounts_from_usage(
+    account: VolcengineAccount,
+    coding_payload: dict[str, Any] | None = None,
+    agent_payload: dict[str, Any] | None = None,
+    *,
+    coding_plan: dict[str, Any] | None = None,
+    agent_plan: dict[str, Any] | None = None,
+) -> list[AccountQuota]:
+    """把单个火山账号拆成 Coding / Agent 两张卡：各自独立的档位、额度与订阅到期。
+
+    只在该套餐有档位信息或有额度窗口时才产出一张卡；两者皆无时返回空列表，
+    由调用方（provider）统一降级为一张错误卡。
+    """
+    reports: list[AccountQuota] = []
+
+    coding_windows, coding_status = parse_coding_plan_usage(coding_payload or {})
+    coding_info = coding_plan or {}
+    # 已知但未生效的套餐（停机/欠费）也要出一张卡，避免与另一张卡并存时问题被静默吞掉。
+    coding_inactive = bool(coding_status) and coding_status.lower() != "running"
+    if coding_info or coding_windows or coding_inactive:
+        report = _build_report(account, "coding", coding_info, coding_windows, coding_status)
+        if not report.windows and coding_inactive:
+            report.error = f"套餐状态：{coding_status}"
+        reports.append(report)
+
+    agent_windows = parse_agent_plan_usage(agent_payload or {})
+    agent_info = agent_plan or {}
+    if agent_info or agent_windows:
+        reports.append(
+            _build_report(
+                account, "agent", agent_info, agent_windows, str(agent_info.get("status") or "")
+            )
+        )
+
+    return reports

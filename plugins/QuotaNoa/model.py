@@ -11,7 +11,7 @@ import re
 import time
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 
 @dataclass
@@ -41,12 +41,58 @@ def window_is_used(window: QuotaWindow) -> bool:
     return window.id.startswith("grok-")
 
 
+#: 火山计划分组顺序（汇总视图：Coding 在前，Agent 在后）。
+PLAN_GROUP_ORDER = ("Coding", "Agent")
+
+
+def plan_group_of(window_id: str) -> str:
+    """火山窗口 id → 计划分组名（``"Coding"`` / ``"Agent"``）；非火山返回空串。"""
+    wid = (window_id or "").lower()
+    if wid.startswith("volc-agent-"):
+        return "Agent"
+    if wid.startswith("volc-"):
+        return "Coding"
+    return ""
+
+
+def group_window_ids_by_plan(ordered_ids: Sequence[str]) -> list[tuple[str, list[str]]]:
+    """把有序窗口 id 按火山计划分组，供「计划小标题 + 窗口行」式汇总渲染。
+
+    规则：
+    - 非火山窗口归入计划名为 ``""`` 的一组，组内保持传入顺序，且该组排在最前；
+    - 火山窗口按 :data:`PLAN_GROUP_ORDER`（Coding → Agent）归组，组内保持传入顺序；
+    - 未知火山计划（未来扩展）追加在已知组之后。
+    """
+    plain: list[str] = []
+    plan_groups: dict[str, list[str]] = {}
+    for wid in ordered_ids:
+        plan = plan_group_of(wid)
+        if plan:
+            plan_groups.setdefault(plan, []).append(wid)
+        else:
+            plain.append(wid)
+    result: list[tuple[str, list[str]]] = []
+    if plain:
+        result.append(("", plain))
+    for plan in PLAN_GROUP_ORDER:
+        if plan_groups.get(plan):
+            result.append((plan, plan_groups[plan]))
+    for plan, ids in plan_groups.items():
+        if plan not in PLAN_GROUP_ORDER and ids:
+            result.append((plan, ids))
+    return result
+
+
 @dataclass
 class AccountQuota:
     platform: str
     name: str
     auth_index: str
     plan: str = ""
+    #: 计划徽章：[(kind, text)]，kind ∈ {"coding","agent"}；卡片按计划分别标记。
+    plan_badges: list[tuple[str, str]] = field(default_factory=list)
+    #: 订阅到期徽章：[(kind, text)]，kind ∈ {"coding","agent"}。
+    subscription_badges: list[tuple[str, str]] = field(default_factory=list)
     status: str = "unknown"
     error: str = ""
     windows: list[QuotaWindow] = field(default_factory=list)
@@ -107,6 +153,10 @@ WINDOW_ORDER = (
     "qoder-general",
     "qoder-addon",
 )
+
+
+#: 本地渠道（非 CPA 实例）：凭据来自本机配置，不经过 CLIProxyAPI。
+LOCAL_CHANNELS = ("volcengine", "workbuddy", "qoder")
 
 
 #: 渠道（channel）别名表。渠道是与 Provider 无关的“归属”标识，别名按渠道分桶。

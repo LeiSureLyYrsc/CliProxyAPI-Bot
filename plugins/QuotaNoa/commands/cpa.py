@@ -210,11 +210,13 @@ def _cpa_help_text(providers: str) -> str:
             "  cpa login callback <回调链接>",
             "  cpa login cancel",
             "",
-            "【额度】与 /quota 同义；默认查询全部实例。",
+            "【额度】默认查询全部 CPA 实例（若配置 cpa.quota_default_channels 则查指定本地渠道）。",
             "  cpa quota [平台] [实例] [--instance <实例>] [--fresh] [--text]",
             "    例：cpa quota xai JP-AI   只查 JP-AI 实例的 xAI 额度",
             "        cpa quota xai         查全部实例的 xAI 额度",
-            "        cpa quota             查全部实例全平台",
+            "        cpa quota             查全部 CPA 实例（或配置的默认渠道）",
+            "        cpa quota all         查本地渠道 + 全部 CPA 实例",
+            "        cpa quota help        查看帮助",
         ]
     )
 
@@ -346,8 +348,8 @@ async def instance_remove(
 
 @cpa.assign("quota")
 async def cpa_quota(event: Event) -> None:
-    """`/cpa quota` 与 `/quota` 同义：默认查询全部实例。"""
-    await quota_entry(event)
+    """`/cpa quota` 额度查询入口：默认查全部 CPA 实例。"""
+    await quota_entry(event, entry="cpa")
 
 
 @cpa.assign("status")

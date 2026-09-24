@@ -15,8 +15,8 @@ from nonebot_plugin_alconna import __supported_adapters__  # noqa: E402
 
 __plugin_meta__ = PluginMetadata(
     name="QuotaNoa",
-    description="多渠额度查询与 CLIProxyAPI 管理：CPA 各平台额度汇总、火山方舟 Coding Plan、WorkBuddy 网关、OAuth 登录与凭证巡检",
-    usage="/quota 查额度（/quota 火山 查火山方舟、/quota wb 查 WorkBuddy）；/cpa 管理 CLIProxyAPI",
+    description="多渠额度查询与 CLIProxyAPI 管理：CPA 各平台额度汇总、火山方舟 Coding/Agent Plan、WorkBuddy 网关、OAuth 登录与凭证巡检",
+    usage="/quota 查额度（默认本地渠道；/quota all 查全部渠道）；/cpa 管理 CLIProxyAPI",
     type="application",
     config=Config,
     supported_adapters=__supported_adapters__,

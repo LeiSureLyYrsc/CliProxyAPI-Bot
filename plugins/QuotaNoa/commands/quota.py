@@ -30,6 +30,7 @@ from ..cpa.quota import (
     peek_quota_cache,
     platform_of,
 )
+from ..model import LOCAL_CHANNELS
 from ..query import QuotaSelection, parse_quota_command, strip_quota_head, tokenize
 from ..render.html import RenderError, render_board_images
 from ..volcengine.provider import collect_board as collect_volcengine_board
@@ -37,6 +38,31 @@ from ..wb.provider import collect_board as collect_workbuddy_board
 from ..qoder.provider import collect_board as collect_qoder_board
 
 from .common import CPA_ADMIN, _require_one_across, _text, _without
+
+#: /quota all 与默认查询使用的本地渠道顺序。
+LOCAL_CHANNEL_LABELS = {"volcengine": "火山", "workbuddy": "WorkBuddy", "qoder": "Qoder"}
+
+#: 触发帮助的查询词（裸命令不再显示帮助）。
+HELP_TOKENS = {"help", "--help", "-h"}
+
+
+def _is_help_request(parts: Sequence[str]) -> bool:
+    """判断请求是否为查看帮助。"""
+    return len(parts) == 1 and parts[0].lower() in HELP_TOKENS
+
+
+def _resolve_default_channels(configured: Sequence[str], entry: str) -> tuple[str, ...] | None:
+    """无参数查询默认渠道集；返回 None 表示走全部 CPA 实例（现状）。
+
+    - 配置 cpa.quota_default_channels 非空：两个入口都只查列表内本地渠道。
+    - 配置为空：非对称——/quota 默认查全部本地渠道，/cpa quota 默认查全部 CPA 实例。
+    """
+    if configured:
+        return tuple(configured)
+    if entry != "cpa":
+        return tuple(LOCAL_CHANNELS)
+    return None
+
 
 # --------------------------------------------------------------------------- #
 # 子命令 Alconna 结构（别名/主题/卡片/配置在各自模块里挂 handler）
@@ -46,6 +72,7 @@ quota = on_alconna(
     Alconna(
         ["/"],
         "quota",
+        Subcommand("help", help_text="查看帮助"),
         Subcommand("cooling", help_text="仅看冷却中的凭证"),
         Subcommand("reset", Args["query", str], help_text="清除配额/冷却并恢复路由"),
         Subcommand(
@@ -157,29 +184,26 @@ quota = on_alconna(
 
 
 @quota.assign("$main")
-async def quota_main(arp: Arparma, event: Event) -> None:
-    # MultiVar 在无剩余 token 时也会填充 tail=()，因此不能只看 bool(main_args)。
-    if _should_show_help(arp.main_args):
-        await UniMessage(_quota_help_text()).finish()
-    await quota_view(event)
+async def quota_main(event: Event) -> None:
+    await quota_entry(event, entry="quota")
 
 
-def _should_show_help(main_args: dict[str, Any]) -> bool:
-    """判断 /quota 主命令是否没有任何查询参数（此时展示帮助）。"""
-    a = main_args.get("a")
-    b = main_args.get("b")
-    tail = main_args.get("tail") or ()
-    return not (a or b or tail)
+@quota.assign("help")
+async def quota_help() -> None:
+    await UniMessage(_quota_help_text()).finish()
 
 
-async def quota_entry(event: Event) -> None:
-    """共享入口：裸命令显示帮助，否则查询。
+async def quota_entry(event: Event, *, entry: str = "quota") -> None:
+    """共享入口：/quota 与 /cpa quota 复用。
 
-    供 /quota 与 /cpa quota 复用；两处前缀都由 ``strip_quota_head`` 归一。
+    ``entry`` 区分入口（"quota" / "cpa"），决定无参数时的默认渠道集：
+    配置 cpa.quota_default_channels 非空时两个入口都只查列表内本地渠道；
+    为空时非对称：/quota 默认查全部本地渠道，/cpa quota 默认查全部 CPA 实例。
+    查询：/quota help（或 --help / -h）显示帮助。
     """
-    if not strip_quota_head(tokenize(event.get_plaintext())):
+    if _is_help_request(strip_quota_head(tokenize(event.get_plaintext()))):
         await UniMessage(_quota_help_text()).finish()
-    await quota_view(event)
+    await quota_view(event, entry=entry)
 
 
 # --------------------------------------------------------------------------- #
@@ -193,9 +217,14 @@ def _quota_help_text() -> str:
             "QuotaNoa 额度查询（仅超级用户 / admins）",
             "命令固定带 / 前缀（指令头）。",
             "",
-            "【查询】默认查询全部 CPA 实例，多实例时按 [实例名] 前缀区分。",
+            "【查询】默认查询本地渠道（火山 / WorkBuddy / Qoder）；多实例时 CPA 结果按 [实例名] 前缀区分。",
             "  /quota",
-            "    全部 CPA 实例全平台额度汇总。",
+            "    无参数：查询全部本地渠道（火山 / WorkBuddy / Qoder）。",
+            "    若配置了 cpa.quota_default_channels，则只查列表内渠道。",
+            "  /quota all",
+            "    查询全部渠道：本地渠道 + 全部 CPA 实例（同义 --all / -a）。",
+            "  /quota help",
+            "    查看本帮助（同义 --help / -h）。",
             "  /quota <平台>",
             "    claude / codex(gpt, openai) / antigravity(反重力, agy) / kimi / xai / 火山(volcengine, ark) / workbuddy(wb) / qoder(qd)",
             "  /quota <实例>",
@@ -218,6 +247,7 @@ def _quota_help_text() -> str:
             "  /quota alias del <查询词>    删除（跨渠道全部删除）",
             "",
             "【火山方舟】本地渠道，凭据存 data/quotanoa_config.json 的 volcengine.accounts。",
+            "  支持 Coding Plan 与 Agent Plan，双套餐额度合并为一张卡片展示（含 Coding/Agent 档位徽章与到期时间）。",
             "  /quota volc list",
             "  /quota volc add <名称> <AK> <SK> [region]",
             "  /quota volc remove <名称> --yes",
@@ -396,7 +426,7 @@ async def volc_remove(
 # --------------------------------------------------------------------------- #
 
 
-async def quota_view(event: Event) -> None:
+async def quota_view(event: Event, *, entry: str = "quota") -> None:
     snapshot = state.get_snapshot()
     selection = parse_quota_command(
         event.get_plaintext(),
@@ -417,6 +447,14 @@ async def quota_view(event: Event) -> None:
     if selection.platform == "qoder":
         await _send_qoder_results(snapshot.cpa, selection)
         return
+    if selection.all_channels and not selection.platform:
+        await _send_channels(snapshot, LOCAL_CHANNELS, include_cpa=True, selection=selection)
+        return
+    if not (selection.platform or selection.instance or selection.account):
+        channels = _resolve_default_channels(snapshot.cpa.quota_default_channels, entry)
+        if channels is not None:
+            await _send_channels(snapshot, channels, include_cpa=False, selection=selection)
+            return
     targets = _quota_targets(selection)
     if targets is None:
         return
@@ -447,7 +485,7 @@ async def _send_volcengine_results(cpa: CpaConfig, selection: QuotaSelection) ->
             "或编辑 data/quotanoa_config.json 的 volcengine.accounts。"
         ).finish()
         return
-    await UniMessage("正在查询火山方舟 Coding Plan 额度…").send()
+    await UniMessage("正在查询火山方舟 Coding/Agent Plan 额度…").send()
     try:
         board = await collect_volcengine_board(accounts, force=selection.fresh)
     except Exception as exc:  # noqa: BLE001 - 兜底，避免单渠道异常打断消息处理
@@ -507,6 +545,73 @@ async def _send_qoder_results(cpa: CpaConfig, selection: QuotaSelection) -> None
         await UniMessage(f"Qoder 额度查询失败：{exc}").finish()
         return
     await _send_quota_results(cpa, [("Qoder", board)], want_text=selection.text, multi=False)
+
+
+async def _local_channel_board(snapshot, channel: str, *, force: bool) -> QuotaBoard | None:
+    """收集某个本地渠道的额度板；未配置返回 None。"""
+    if channel == "volcengine":
+        accounts = list(snapshot.volcengine.accounts)
+        if not accounts:
+            return None
+        return await collect_volcengine_board(accounts, force=force)
+    if channel == "workbuddy":
+        servers = list(snapshot.workbuddy.servers)
+        if not servers:
+            return None
+        return await collect_workbuddy_board(servers, force=force)
+    if channel == "qoder":
+        servers = list(snapshot.qoder.servers)
+        if not servers:
+            return None
+        return await collect_qoder_board(servers, force=force)
+    return None
+
+
+def _no_channel_configured_text() -> str:
+    return (
+        "没有可查询的渠道。\n"
+        "本地渠道：/quota volc add <名称> <AK> <SK>、/quota wb add …、/quota qoder add …\n"
+        "CPA 实例：/cpa instance add <名称> <base_url>\n"
+        "查看全部渠道：/quota all"
+    )
+
+
+async def _send_channels(
+    snapshot,
+    channels: Sequence[str],
+    *,
+    include_cpa: bool,
+    selection: QuotaSelection,
+) -> None:
+    """按渠道集合发送额度：本地渠道 + 可选全部 CPA 实例。"""
+    cpa = snapshot.cpa
+    wanted_local = [ch for ch in channels if ch in LOCAL_CHANNELS]
+    cpa_targets = list(cpa.names()) if include_cpa else []
+    if not wanted_local and not cpa_targets:
+        await UniMessage(_no_channel_configured_text()).finish()
+        return
+    results: list[tuple[str, QuotaBoard | str]] = []
+    await UniMessage("正在查询额度，可能需要几秒…").send()
+    for channel in wanted_local:
+        label = LOCAL_CHANNEL_LABELS.get(channel, channel)
+        try:
+            board = await _local_channel_board(snapshot, channel, force=selection.fresh)
+        except Exception as exc:  # noqa: BLE001 - 单渠道异常不阻断其它渠道
+            results.append((label, f"额度查询失败：{exc}"))
+            continue
+        if board is None or not board.platforms:
+            continue
+        results.append((label, board))
+    for name in cpa_targets:
+        try:
+            board = await _instance_quota_board(name, selection)
+            results.append((name, board))
+        except CPAError as exc:
+            results.append((name, str(exc)))
+    if not results:
+        await UniMessage(_no_channel_configured_text()).finish()
+        return
+    await _send_quota_results(cpa, results, want_text=selection.text, multi=len(results) > 1)
 
 
 def _custom_channel_keywords() -> dict[str, str]:

@@ -28,6 +28,7 @@ from ..model import (
     calculate_total_reset_credits,
     extract_earliest_reset_seconds,
     format_reset_zh,
+    group_window_ids_by_plan,
     prefix_instance,
     sort_windows,
     stamp_instance,
@@ -555,15 +556,20 @@ def format_quota_board(board: QuotaBoard, *, account_limit: int = 12) -> list[st
     return chunks or ["没有可展示的额度账号。"]
 
 
-def platform_total_chips(section: PlatformQuota) -> list[str]:
+def platform_total_groups(section: PlatformQuota) -> list[tuple[str, list[str]]]:
+    """合计窗口按火山计划分组：返回 ``[(计划名, [chip, ...]), ...]``。
+
+    非火山平台返回单组 ``("", [所有 chip])``；火山平台按 Coding → Agent 分组，
+    计划名由调用方渲染为小标题（``""`` 表示不分组、不加标题）。
+    """
     account_n = len(section.accounts)
-    chips: list[str] = []
     ordered = sort_windows(
         [
             QuotaWindow(id=window_id, label=section.window_labels.get(window_id, window_id))
             for window_id in section.window_remain_sum
         ]
     )
+    chips_by_id: dict[str, str] = {}
     for window in ordered:
         window_id = window.id
         total = section.window_remain_sum[window_id]
@@ -572,16 +578,31 @@ def platform_total_chips(section: PlatformQuota) -> list[str]:
         equiv = total / 100.0
         avg = (equiv / denom * 100.0) if denom else 0.0
         label = section.window_labels.get(window_id, window_id)
-        chips.append(f"{label} {equiv:.2f}/{denom} ({avg:.0f}%)")
+        chips_by_id[window_id] = f"{label} {equiv:.2f}/{denom} ({avg:.0f}%)"
+    groups: list[tuple[str, list[str]]] = [
+        (plan, [chips_by_id[wid] for wid in ids])
+        for plan, ids in group_window_ids_by_plan([window.id for window in ordered])
+    ]
     if section.limit_sum:
-        chips.append(f"绝对剩余 {section.remaining_sum:.0f}/{section.limit_sum:.0f}")
-    return chips
+        tail = f"绝对剩余 {section.remaining_sum:.0f}/{section.limit_sum:.0f}"
+        if groups:
+            groups[-1][1].append(tail)
+        else:
+            groups = [("", [tail])]
+    return groups
+
+
+def platform_total_chips(section: PlatformQuota) -> list[str]:
+    """扁平合计 chips（保持既有调用与测试兼容）。"""
+    return [chip for _plan, chips in platform_total_groups(section) for chip in chips]
 
 
 def format_account_quota(account: AccountQuota) -> str:
     lines = [f"[{PLATFORM_TITLES.get(account.platform, account.platform)}] {account.name}"]
     if account.plan:
         lines.append(f"套餐：{account.plan}")
+    for _kind, text in (getattr(account, "subscription_badges", None) or []):
+        lines.append(str(text))
     lines.append(f"状态：{account.status}")
     if account.error:
         lines.append(f"错误：{account.error}")
@@ -1229,9 +1250,15 @@ async def _upstream_json(
 def _format_platform(section: PlatformQuota, account_limit: int) -> list[str]:
     account_n = len(section.accounts)
     lines = [f"【{section.title}】{account_n} 账号"]
-    totals = platform_total_chips(section)
-    if totals:
-        lines.append("  合计：" + " · ".join(totals))
+    total_groups = platform_total_groups(section)
+    if total_groups:
+        if len(total_groups) == 1 and not total_groups[0][0]:
+            lines.append("  合计：" + " · ".join(total_groups[0][1]))
+        else:
+            lines.append("  合计：")
+            for plan, chips in total_groups:
+                head = f"{plan}：" if plan else ""
+                lines.append(f"    {head}" + " · ".join(chips))
     visible = section.accounts[:account_limit]
     for account in visible:
         flags = []
@@ -1251,7 +1278,12 @@ def _format_platform(section: PlatformQuota, account_limit: int) -> list[str]:
             lines.append(f"  {shown}{plan}{flag}  {st_text}（无上游额度）")
             continue
         windows = " · ".join(_window_text(window, compact=True) for window in account.windows[:4])
-        lines.append(f"  {shown}{plan}{flag}  {windows}")
+        subs = " · ".join(str(t) for _k, t in (getattr(account, "subscription_badges", None) or []))
+        if subs:
+            shown_subs = f"  {subs}"
+        else:
+            shown_subs = ""
+        lines.append(f"  {shown}{plan}{flag}  {windows}{shown_subs}")
     extra = len(section.accounts) - len(visible)
     if extra > 0:
         lines.append(f"  ... 另有 {extra} 个账号，用 /quota {section.platform} 查看")

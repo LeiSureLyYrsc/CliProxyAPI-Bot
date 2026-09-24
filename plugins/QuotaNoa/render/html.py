@@ -20,6 +20,7 @@ from ..model import (
     calculate_total_reset_credits,
     extract_earliest_reset_seconds,
     format_reset_zh,
+    group_window_ids_by_plan,
     instance_tag,
     sort_windows,
     truncate_text,
@@ -54,6 +55,9 @@ _BADGES = {
     "other": "?",
 }
 
+#: 计划徽章 kind -> 主题内已有的徽章样式类（跨全部主题可用）。
+_PLAN_BADGE_CLASS = {"coding": "badge-plan", "agent": "badge-credits"}
+
 _GROUP_TITLES = {
     "gemini": "Gemini Models",
     "claude-gpt": "Claude and GPT Models",
@@ -61,11 +65,14 @@ _GROUP_TITLES = {
     "claude": "Claude",
     "xai": "xAI",
     "kimi": "Usage",
-    "volc": "额度",
+    "volc": "Coding Plan",
+    "volc-agent": "Agent Plan",
     "wb": "积分",
     "qoder": "积分",
     "other": "Quota",
 }
+
+_SUMMARY_PLAN_HEADINGS = {"Coding": "Coding Plan", "Agent": "Agent Plan"}
 
 _BRAND_FILES = {
     "claude": "claude.svg",
@@ -225,20 +232,30 @@ def build_summary_card_html(
     # 2. 聚合配额 (SUM percent + average percent + count)
     agg_windows = calculate_aggregate_windows(section, all_accounts)
     stats_rows = []
-    for agg in agg_windows:
-        # 显示格式：Gemini 5h 344% (均 86% · 4号)
-        is_used = agg.get("mode") == "used"
-        sum_text = f'已使用 {agg["sum_percent"]:.0f}%' if is_used else f'{agg["sum_percent"]:.0f}%'
-        avg_text = f'均已使用 {agg["avg_percent"]:.0f}%' if is_used else f'均 {agg["avg_percent"]:.0f}%'
-        stats_rows.append(
-            f'<div class="summary-stat-row">'
-            f'<span class="summary-stat-label">{html.escape(agg["label"])}</span>'
-            f'<span class="summary-stat-val">'
-            f'<span class="sum-pct">{sum_text}</span> '
-            f'<span class="avg-cnt">({avg_text} · {agg["count"]}号)</span>'
-            f'</span>'
-            f'</div>'
-        )
+    by_id = {item["id"]: item for item in agg_windows}
+    for plan, window_ids in group_window_ids_by_plan([item["id"] for item in agg_windows]):
+        if plan:
+            heading = _SUMMARY_PLAN_HEADINGS.get(plan, f"{plan} Plan")
+            stats_rows.append(
+                f'<div class="summary-plan-heading">{html.escape(heading)}</div>'
+            )
+        for wid in window_ids:
+            agg = by_id.get(wid)
+            if not agg:
+                continue
+            # 显示格式：Gemini 5h 344% (均 86% · 4号)
+            is_used = agg.get("mode") == "used"
+            sum_text = f'已使用 {agg["sum_percent"]:.0f}%' if is_used else f'{agg["sum_percent"]:.0f}%'
+            avg_text = f'均已使用 {agg["avg_percent"]:.0f}%' if is_used else f'均 {agg["avg_percent"]:.0f}%'
+            stats_rows.append(
+                f'<div class="summary-stat-row">'
+                f'<span class="summary-stat-label">{html.escape(agg["label"])}</span>'
+                f'<span class="summary-stat-val">'
+                f'<span class="sum-pct">{sum_text}</span> '
+                f'<span class="avg-cnt">({avg_text} · {agg["count"]}号)</span>'
+                f'</span>'
+                f'</div>'
+            )
     stats_html = (
         f'<div class="summary-stats-grid">{"".join(stats_rows)}</div>' if stats_rows else ""
     )
@@ -298,14 +315,24 @@ def _card_html(account: AccountQuota) -> str:
     if account.disabled:
         badges.append('<span class="badge badge-disabled">已停用</span>')
 
-    # 计划
-    if account.plan:
+    # 计划徽章：火山按 Coding/Agent 分开标记；其它渠道单枚。
+    plan_badges = getattr(account, "plan_badges", None) or []
+    if plan_badges:
+        for kind, text in plan_badges:
+            cls = _PLAN_BADGE_CLASS.get(str(kind), "badge-plan")
+            badges.append(f'<span class="badge {cls}">{html.escape(str(text))}</span>')
+    elif account.plan:
         badges.append(f'<span class="badge badge-plan">{html.escape(account.plan)}</span>')
 
-    # 订阅过期时间标签
-    sub_label = getattr(account, "subscription_expires_label", None)
-    if sub_label:
-        badges.append(f'<span class="badge badge-warn">到期: {html.escape(str(sub_label))}</span>')
+    # 订阅到期：火山 Coding/Agent 各一枚；其它渠道沿用单枚。
+    sub_badges = getattr(account, "subscription_badges", None) or []
+    if sub_badges:
+        for _kind, text in sub_badges:
+            badges.append(f'<span class="badge badge-warn">{html.escape(str(text))}</span>')
+    else:
+        sub_label = getattr(account, "subscription_expires_label", None)
+        if sub_label:
+            badges.append(f'<span class="badge badge-warn">到期: {html.escape(str(sub_label))}</span>')
 
     # Codex 刷新次数
     reset_credits = getattr(account, "reset_credits", None)
@@ -356,7 +383,9 @@ def _card_html(account: AccountQuota) -> str:
 
 def _group_html(title: str, windows: list[QuotaWindow]) -> str:
     rows = "".join(_bar_html(window) for window in windows)
-    return f'<section class="quota-group"><h4 class="group-title">{html.escape(title)}</h4>{rows}</section>'
+    is_plan = title in ("Coding Plan", "Agent Plan")
+    title_cls = "group-title group-title-plan" if is_plan else "group-title"
+    return f'<section class="quota-group"><h4 class="{title_cls}">{html.escape(title)}</h4>{rows}</section>'
 
 
 def _bar_html(window: QuotaWindow) -> str:
@@ -433,6 +462,8 @@ def _grouped_windows(
 
 
 def _group_key(window_id: str) -> str:
+    if window_id.startswith("volc-agent-"):
+        return "volc-agent"
     if window_id.startswith("volc-"):
         return "volc"
     if window_id.startswith("wb-"):

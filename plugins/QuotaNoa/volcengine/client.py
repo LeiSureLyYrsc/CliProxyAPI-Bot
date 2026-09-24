@@ -1,8 +1,10 @@
-"""火山方舟 Coding Plan 额度查询客户端（控制面 OpenAPI）。
+"""火山方舟 Coding Plan 与 Agent Plan 额度查询客户端（控制面 OpenAPI）。
 
-- 端点：``POST https://open.volcengineapi.com/?Action=GetCodingPlanUsage&Region=cn-beijing&Version=2024-01-01``
+- 端点：``POST https://open.volcengineapi.com/?Action=<Action>&Region=cn-beijing&Version=2024-01-01``
 - 鉴权：Volcengine Signature V4（见 ``signer.py``），使用控制面 AccessKey/SecretAccessKey。
-- 返回：``Result.QuotaUsage[]``（Level = session / weekly / monthly，Percent 为已用百分比）。
+- 返回：
+  - Coding Plan: ``Result.QuotaUsage[]``（Level = session / weekly / monthly，Percent 为已用百分比）。
+  - Agent Plan: ``Result``（包含 AFPFiveHour, AFPWeekly, AFPMonthly, AFPDaily 等 AFP 额度窗口）。
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ from .signer import canonical_query_string, sign_request
 OPENAPI_HOST = "open.volcengineapi.com"
 OPENAPI_URL = f"https://{OPENAPI_HOST}/"
 ACTION_CODING_PLAN_USAGE = "GetCodingPlanUsage"
+ACTION_AFP_USAGE = "GetAFPUsage"
 ACTION_PERSONAL_PLAN = "GetPersonalPlan"
 API_VERSION = "2024-01-01"
 
@@ -106,16 +109,28 @@ async def query_coding_plan_usage(
 async def query_personal_plan(
     account: VolcengineAccount,
     *,
+    plan: str = "CodingPlan",
     timeout: float = 20.0,
 ) -> dict:
-    """查询 Coding Plan 套餐档位（Lite / Pro）。
+    """查询套餐档位（如 CodingPlan 的 Lite / Pro，AgentPlan 的 Small）。
 
     未订阅该套餐时火山返回 ``404 ResourceNotFound.Plan``，此时返回空 dict
     （视为「无套餐」），不视为错误。
     """
-    body = json.dumps({"Plan": "CodingPlan"})
+    body = json.dumps({"Plan": plan})
     try:
         return await _post_signed(account, ACTION_PERSONAL_PLAN, body=body, timeout=timeout)
+    except VolcengineError as exc:
+        message = str(exc)
+        if "ResourceNotFound.Plan" in message or "404" in message:
+            return {}
+        raise
+
+
+async def query_afp_usage(account: VolcengineAccount, *, timeout: float = 20.0) -> dict:
+    """查询 Agent Plan（AFP，Agent Flow Points）额度，返回原始 JSON。未订阅返回空 dict。"""
+    try:
+        return await _post_signed(account, ACTION_AFP_USAGE, timeout=timeout)
     except VolcengineError as exc:
         message = str(exc)
         if "ResourceNotFound.Plan" in message or "404" in message:

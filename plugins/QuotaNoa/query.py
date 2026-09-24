@@ -47,6 +47,7 @@ class QuotaSelection:
     account: str | None = None
     fresh: bool = False
     text: bool = False
+    all_channels: bool = False
     error: str | None = None
 
 
@@ -85,6 +86,7 @@ def parse_quota_parts(
     known = {normalize_name(name) for name in known_instances if valid_name(name)}
     fresh = False
     text_mode = False
+    all_channels = False
     explicit_instance: str | None = None
     positional: list[str] = []
     index = 0
@@ -94,7 +96,7 @@ def parse_quota_parts(
         if lowered in {"cooling", "reset"} and index == 0:
             return QuotaSelection(error="")
         if lowered in ALL_FLAGS:
-            # 显式 all = 查询全部实例（与“不指定实例”等价，默认即全部）。
+            all_channels = True
             index += 1
             continue
         if lowered in INSTANCE_FLAGS:
@@ -167,4 +169,5 @@ def parse_quota_parts(
         account=accounts[0] if accounts else None,
         fresh=fresh,
         text=text_mode,
+        all_channels=all_channels,
     )

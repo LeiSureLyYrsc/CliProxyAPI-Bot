@@ -198,6 +198,24 @@ html, body {
   max-width: 100%;
 }
 
+.summary-plan-heading {
+  margin-top: 2px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 700;
+  opacity: 0.7;
+  min-width: 0;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.summary-stats-grid > .summary-plan-heading:first-child {
+  margin-top: 0;
+}
+
 .summary-stat-row {
   display: flex;
   align-items: center;
@@ -317,6 +335,13 @@ html, body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.group-title-plan {
+  margin-bottom: 3px;
+  font-weight: 700;
+  opacity: 0.85;
+  letter-spacing: 0.06em;
 }
 
 .bar-item {
