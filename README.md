@@ -95,8 +95,7 @@ telegram_bots=[{"token": "123456:ABC-DEF"}]
       { "name": "wb-main", "base_url": "http://127.0.0.1:7863", "api_key": "", "timeout": 30.0 }
     ]
   },
-  "render": { "theme": "default", "cards_per_row": 4 },
-  "aliases_file": "data/quotanoa_aliases.json"
+  "render": { "theme": "default", "cards_per_row": 4 }
 }
 ```
 
@@ -107,7 +106,8 @@ telegram_bots=[{"token": "123456:ABC-DEF"}]
 | `volcengine.accounts` | 火山方舟 Coding Plan 查询凭据（控制面 AccessKey，需 `ArkReadOnlyAccess`） |
 | `workbuddy.servers[]` | 每个 WorkBuddy2API 网关一项：`base_url`（如 `http://host:7863`）、`api_key`（可空）、`timeout`。多个网关的账号会汇总到同一张 WorkBuddy 板，按网关名前缀区分 |
 | `render` | 额度图主题与每行卡片数（1..6），`/quota theme` `/quota card row` 可改 |
-| `aliases_file` | 分渠道别名文件，默认 `data/quotanoa_aliases.json` |
+
+别名文件路径由代码（`plugins/QuotaNoa/config.py` 的 `DEFAULT_ALIASES_FILE`）决定，默认 `data/quotanoa_aliases.json`，**不写入生成的配置文件**；如需改路径，可在 JSON 里显式加可选覆盖项 `"aliases_file"`（旧配置兼容）。
 
 修改配置后**自动热重载**（也可 `/quota config reload` 强制）；`/quota config show` 查看当前生效值。旧的 `CPA_*` 环境变量与 `data/cpa_aliases.json` / `data/quota_aliases.json` / `data/quotabot_config.json` / `data/cpa_render_settings.json` 不再生效（启动时会告警，不做自动迁移）。旧的单实例 `cpa.base_url` 字段不再读取，请改为 `cpa.instances[]`。
 

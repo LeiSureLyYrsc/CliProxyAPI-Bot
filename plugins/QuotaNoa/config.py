@@ -251,6 +251,8 @@ class ConfigSnapshot:
     volcengine: VolcengineConfig = field(default_factory=VolcengineConfig)
     workbuddy: WorkbuddyConfig = field(default_factory=WorkbuddyConfig)
     render: RenderConfig = field(default_factory=RenderConfig)
+    #: 别名文件路径；默认由本模块的 ``DEFAULT_ALIASES_FILE`` 决定，
+    #: JSON 里的 ``aliases_file`` 仅作可选覆盖（旧配置兼容），不再写入生成文件。
     aliases_file: str = DEFAULT_ALIASES_FILE
     raw: Mapping[str, Any] = field(default_factory=dict)
 
@@ -301,7 +303,6 @@ class ConfigSnapshot:
                 "theme": self.render.theme,
                 "cards_per_row": self.render.cards_per_row,
             },
-            "aliases_file": self.aliases_file,
         }
 
 
