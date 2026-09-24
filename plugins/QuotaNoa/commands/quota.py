@@ -101,9 +101,16 @@ quota = on_alconna(
             Subcommand(
                 "add",
                 Args["name", str]["base_url", str],
-                Option("--key", Args["key", str], dest="key", help_text="网关 api_key"),
+                Option("--user", Args["user", str], dest="user", help_text="控制台账号"),
+                Option("--pass", Args["password", str], dest="password", help_text="控制台密码"),
+                Option("--key", Args["key", str], dest="key", help_text="网关 api_key（跳过登录）"),
                 Option("--timeout", Args["timeout", str], dest="timeout", help_text="请求超时秒"),
-                help_text="新增 WorkBuddy 网关：/quota wb add <名称> <base_url> [--key K]",
+                help_text="新增 WorkBuddy 网关：/quota wb add <名称> <base_url> --user U --pass P",
+            ),
+            Subcommand(
+                "login",
+                Args["name", str],
+                help_text="校验账号密码并刷新会话：/quota wb login <名称>",
             ),
             Subcommand(
                 "remove|rm|delete",
@@ -198,7 +205,8 @@ def _quota_help_text() -> str:
             "【WorkBuddy】本地渠道，网关存 data/quotanoa_config.json 的 workbuddy.servers。",
             "  /quota wb              查询全部网关额度（同 workbuddy）",
             "  /quota wb list",
-            "  /quota wb add <名称> <base_url> [--key K] [--timeout N]",
+            "  /quota wb add <名称> <base_url> --user U --pass P [--timeout N]",
+            "  /quota wb login <名称>  校验账号密码并刷新会话",
             "  /quota wb remove <名称> --yes",
             "",
             "【主题与排版】修改后立刻生效并持久化。",
@@ -442,7 +450,7 @@ async def _send_workbuddy_results(cpa: CpaConfig, selection: QuotaSelection) -> 
     servers = list(state.get_snapshot().workbuddy.servers)
     if not servers:
         await UniMessage(
-            "未配置 WorkBuddy 网关。用 /quota wb add <名称> <base_url> [--key K] 添加，"
+            "未配置 WorkBuddy 网关。用 /quota wb add <名称> <base_url> --user U --pass P 添加，"
             "或编辑 data/quotanoa_config.json 的 workbuddy.servers。"
         ).finish()
         return
@@ -470,7 +478,10 @@ def _custom_channel_keywords() -> dict[str, str]:
 # --------------------------------------------------------------------------- #
 
 
-@quota.assign("workbuddy", additional=_without("workbuddy.list", "workbuddy.add", "workbuddy.remove"))
+@quota.assign(
+    "workbuddy",
+    additional=_without("workbuddy.list", "workbuddy.add", "workbuddy.remove", "workbuddy.login"),
+)
 async def quota_workbuddy(event: Event) -> None:
     """`/quota wb`：查询 WorkBuddy 全部网关额度（渠道查询，不查单个账号）。
 

@@ -92,7 +92,7 @@ telegram_bots=[{"token": "123456:ABC-DEF"}]
   },
   "workbuddy": {
     "servers": [
-      { "name": "wb-main", "base_url": "http://127.0.0.1:7863", "api_key": "", "timeout": 30.0 }
+      { "name": "wb-main", "base_url": "http://127.0.0.1:7863", "username": "admin", "password": "workbuddy", "timeout": 30.0 }
     ]
   },
   "render": { "theme": "default", "cards_per_row": 4 }
@@ -104,7 +104,7 @@ telegram_bots=[{"token": "123456:ABC-DEF"}]
 | `cpa.instances[]` | 每个 CLIProxyAPI 实例一项，自带 `base_url` / `management_key` / 超时 / 并发 / 缓存 / 图片开关。`base_url` 可写 `http://host:8317` 或带 `/v0/management` 的完整前缀 |
 | `cpa.admins` / `cpa.codex_refresh_admin` | 全局权限名单（与实例无关） |
 | `volcengine.accounts` | 火山方舟 Coding Plan 查询凭据（控制面 AccessKey，需 `ArkReadOnlyAccess`） |
-| `workbuddy.servers[]` | 每个 WorkBuddy2API 网关一项：`base_url`（如 `http://host:7863`）、`api_key`（可空）、`timeout`。多个网关的账号会汇总到同一张 WorkBuddy 板，按网关名前缀区分 |
+| `workbuddy.servers[]` | 每个 WorkBuddy2API 网关一项：`base_url`（如 `http://host:7863`）、`username` + `password`（控制台账号，插件自动登录换 `api_key`）、可选 `api_key`（跳过登录直连）、`timeout`。多个网关的账号会汇总到同一张 WorkBuddy 板，按网关名前缀区分 |
 | `render` | 额度图主题与每行卡片数（1..6），`/quota theme` `/quota card row` 可改 |
 
 别名文件路径由代码（`plugins/QuotaNoa/config.py` 的 `DEFAULT_ALIASES_FILE`）决定，默认 `data/quotanoa_aliases.json`，**不写入生成的配置文件**；如需改路径，可在 JSON 里显式加可选覆盖项 `"aliases_file"`（旧配置兼容）。
@@ -137,7 +137,8 @@ Bot 与 CPA 不在同一台机器时，CPA 需要 `remote-management.allow-remot
 | `/quota volc add <名称> <AK> <SK> [region]` | 新增火山方舟账号（写入配置） |
 | `/quota volc remove <名称> --yes` | 删除火山方舟账号 |
 | `/quota wb list` | 列出 WorkBuddy 网关 |
-| `/quota wb add <名称> <base_url> [--key K] [--timeout N]` | 新增 WorkBuddy 网关（写入配置） |
+| `/quota wb add <名称> <base_url> --user U --pass P [--timeout N]` | 新增 WorkBuddy 网关（用控制台账号密码；也可 `--key` 直连）。写入配置 |
+| `/quota wb login <名称>` | 校验账号密码并刷新会话 |
 | `/quota wb remove <名称> --yes` | 删除 WorkBuddy 网关 |
 | `/quota alias list [--disabled]` | 列出账号显示别名（分渠道） |
 | `/quota alias set <渠道> <查询词> <别名>` | 为指定渠道账号设置别名 |

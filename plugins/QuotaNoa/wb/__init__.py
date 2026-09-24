@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from .client import WorkbuddyError, fetch_quota, healthz
+from .client import WorkbuddyError, fetch_quota, healthz, login, reset_sessions
 from .provider import CHANNEL, collect_board
 from .quota import CREDITS_WINDOW_ID, CREDITS_WINDOW_LABEL, parse_quota_accounts
 
@@ -21,5 +21,7 @@ __all__ = [
     "collect_board",
     "fetch_quota",
     "healthz",
+    "login",
     "parse_quota_accounts",
+    "reset_sessions",
 ]

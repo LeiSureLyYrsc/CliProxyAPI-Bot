@@ -42,8 +42,15 @@ async def quota_config_show() -> None:
     )
     if snapshot.workbuddy.servers:
         for server in snapshot.workbuddy.servers:
-            key = mask_secret(server.api_key) if server.api_key else "（未设置）"
-            lines.append(f"  - {server.name}  {server.base_url}  key={key}  timeout={server.timeout:g}s")
+            auth = "（未设置）"
+            if server.username:
+                pwd = mask_secret(server.password) if server.password else "（空）"
+                auth = f"账号={server.username} 密码={pwd}"
+            elif server.api_key:
+                auth = f"api_key={mask_secret(server.api_key)}"
+            lines.append(
+                f"  - {server.name}  {server.base_url}  {auth}  timeout={server.timeout:g}s"
+            )
     else:
         lines.append("  网关：（未配置）")
     lines.extend(

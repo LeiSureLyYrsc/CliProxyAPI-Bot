@@ -220,12 +220,18 @@ class VolcengineConfig:
 class WorkbuddyServer:
     """单个 WorkBuddy2API 网关（单端口同时提供 API 与控制台）。
 
-    ``base_url`` 形如 ``http://127.0.0.1:7863``；``api_key`` 为空时网关放行
-    ``/v1/*``（生产环境务必设置）。
+    - ``base_url`` 形如 ``http://127.0.0.1:7863``。
+    - 鉴权为**控制台账号 + 密码**（``username`` / ``password``）：插件先
+      ``POST /api/login`` 换取会话 token，再 ``GET /api/config`` 读取网关的
+      ``api_key``，最后用它调 ``/v1/quota``。会话自动缓存与过期重登。
+    - ``api_key`` 为**可选直连覆盖**：填了就跳过登录，直接用它与 ``/v1/quota``
+      通信（适用于已知道网关密钥、或未开控制台鉴权的场景）。
     """
 
     name: str
     base_url: str
+    username: str = ""
+    password: str = ""
     api_key: str = ""
     timeout: float = 30.0
 
@@ -293,6 +299,8 @@ class ConfigSnapshot:
                     {
                         "name": server.name,
                         "base_url": server.base_url,
+                        "username": server.username,
+                        "password": server.password,
                         "api_key": server.api_key,
                         "timeout": server.timeout,
                     }
@@ -399,6 +407,8 @@ def _parse_workbuddy(raw: Any) -> WorkbuddyConfig:
                 WorkbuddyServer(
                     name=name,
                     base_url=base_url,
+                    username=_as_str(entry.get("username")),
+                    password=_as_str(entry.get("password")),
                     api_key=_as_str(entry.get("api_key")),
                     timeout=max(1.0, _as_float(entry.get("timeout"), 30.0)),
                 )

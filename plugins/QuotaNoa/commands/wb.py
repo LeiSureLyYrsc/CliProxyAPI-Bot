@@ -2,6 +2,9 @@
 
 查询用 ``/quota wb`` / ``/quota workbuddy``（见 commands/quota.py）；本模块只负责
 网关的增删查，写入配置后自动热重载。
+
+鉴权：网关用**控制台账号 + 密码**登录（``--user`` / ``--pass``），插件自动换取
+会话并读取 ``api_key``；也可用 ``--key`` 直接指定网关 api_key 跳过登录。
 """
 
 from __future__ import annotations
@@ -14,6 +17,7 @@ from .. import state
 from ..config import ConfigError, normalize_name, valid_name
 from ..cpa.format import mask_secret
 from ..model import is_channel_name
+from ..wb.client import WorkbuddyError, reset_sessions
 
 from .common import _text
 from .quota import quota
@@ -37,13 +41,18 @@ async def wb_list() -> None:
     servers = state.get_snapshot().workbuddy.servers
     if not servers:
         await UniMessage(
-            "还没有配置 WorkBuddy 网关。新增：/quota wb add <名称> <base_url> [--key K]"
+            "还没有配置 WorkBuddy 网关。"
+            "新增：/quota wb add <名称> <base_url> --user <账号> --pass <密码>"
         ).finish()
         return
     lines = ["【WorkBuddy 网关】"]
     for server in servers:
-        key = mask_secret(server.api_key) if server.api_key else "（未设置）"
-        lines.append(f"  {server.name}  {server.base_url}  key={key}  timeout={server.timeout:g}s")
+        auth = "（未设置）"
+        if server.username:
+            auth = f"账号 {server.username} / 密码 {mask_secret(server.password) if server.password else '（空）'}"
+        elif server.api_key:
+            auth = f"api_key {mask_secret(server.api_key)}"
+        lines.append(f"  {server.name}  {server.base_url}  {auth}  timeout={server.timeout:g}s")
     await UniMessage("\n".join(lines)).finish()
 
 
@@ -51,6 +60,8 @@ async def wb_list() -> None:
 async def wb_add(
     name: Query[str] = Query("workbuddy.add.name"),
     base_url: Query[str] = Query("workbuddy.add.base_url"),
+    user: Query[str] = Query("workbuddy.add.user.user"),
+    password: Query[str] = Query("workbuddy.add.password.password"),
     key: Query[str] = Query("workbuddy.add.key.key"),
     timeout: Query[str] = Query("workbuddy.add.timeout.timeout"),
 ) -> None:
@@ -67,13 +78,26 @@ async def wb_add(
     if not url:
         await UniMessage("base_url 不能为空。").finish()
         return
+    account = _text(user) if user.available else ""
+    secret = _text(password) if password.available else ""
+    api_key = _text(key) if key.available else ""
+    if not api_key and not (account and secret):
+        await UniMessage(
+            "需要鉴权信息：用 --user <账号> --pass <密码>（控制台登录），"
+            "或用 --key <api_key>（直连网关）。"
+        ).finish()
+        return
     servers = _workbuddy_raw()
     if any(normalize_name(str(item.get("name") or "")) == raw_name for item in servers):
         await UniMessage(f"网关「{raw_name}」已存在。查看：/quota wb list").finish()
         return
     entry: dict[str, Any] = {"name": raw_name, "base_url": url}
-    if key.available and _text(key):
-        entry["api_key"] = _text(key)
+    if account:
+        entry["username"] = account
+    if secret:
+        entry["password"] = secret
+    if api_key:
+        entry["api_key"] = api_key
     if timeout.available and _text(timeout):
         entry["timeout"] = _text(timeout)
     servers.append(entry)
@@ -82,6 +106,7 @@ async def wb_add(
     except ConfigError as exc:
         await UniMessage(f"写入配置失败：{exc}").finish()
         return
+    reset_sessions(raw_name)
     await UniMessage(f"已新增 WorkBuddy 网关「{raw_name}」→ {url}。查看：/quota wb list").finish()
 
 
@@ -106,4 +131,28 @@ async def wb_remove(
     except ConfigError as exc:
         await UniMessage(f"写入配置失败：{exc}").finish()
         return
+    reset_sessions(raw_name)
     await UniMessage(f"已删除 WorkBuddy 网关「{raw_name}」。").finish()
+
+
+@quota.assign("workbuddy.login")
+async def wb_login(
+    name: Query[str] = Query("workbuddy.login.name"),
+) -> None:
+    """手动触发一次控制台登录（用于校验账号密码/刷新会话）。"""
+    raw_name = normalize_name(_text(name))
+    server = state.get_snapshot().workbuddy.servers
+    target = next((item for item in server if item.name == raw_name), None)
+    if target is None:
+        await UniMessage(f"没有名为「{raw_name}」的 WorkBuddy 网关。查看：/quota wb list").finish()
+        return
+    from ..wb.client import login
+
+    try:
+        _token, api_key = await login(target)
+    except WorkbuddyError as exc:
+        await UniMessage(str(exc)).finish()
+        return
+    await UniMessage(
+        f"网关「{raw_name}」登录成功，已获取 api_key（{mask_secret(api_key)}）。"
+    ).finish()
