@@ -516,3 +516,34 @@ def board_from_accounts(accounts: list[AccountQuota], *, cached: bool = False) -
     board = build_board(accounts)
     board.cached = cached
     return board
+
+
+# --------------------------------------------------------------------------- #
+# 展示助手 —— 实例前缀与限长（cpa/ 与 render/ 共用，故放根模块）
+# --------------------------------------------------------------------------- #
+
+#: 实例前缀（渠道标签）最大字符数。
+MAX_INSTANCE_TAG = 8
+#: 账号显示名最大字符数。
+MAX_ACCOUNT_NAME = 16
+
+
+def truncate_text(text: str, limit: int) -> str:
+    """超长文本以 ``…`` 结尾；``limit`` 非正或文本为空时原样返回。"""
+    value = str(text or "")
+    if limit <= 0 or len(value) <= limit:
+        return value
+    return value[: limit - 1] + "…"
+
+
+def instance_tag(instance: str) -> str:
+    """把实例名规范化为展示用短标签（≤ ``MAX_INSTANCE_TAG``）；空则返回空串。"""
+    return truncate_text(str(instance or "").strip(), MAX_INSTANCE_TAG)
+
+
+def prefix_instance(instance: str, name: str) -> str:
+    """拼出 ``[实例] 账号名``；无实例时只返回账号名。"""
+    tag = instance_tag(instance)
+    shown = truncate_text(name, MAX_ACCOUNT_NAME)
+    return f"[{tag}] {shown}" if tag else shown
+

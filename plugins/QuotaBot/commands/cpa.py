@@ -383,7 +383,8 @@ async def auth_list(
             await UniMessage(f"[{name}] 没有 provider={provider.result} 的凭证。").finish()
             return
     await UniMessage(
-        f"[{name}]\n" + format_auth_list(files, include_disabled=bool(arp.find("auth.list.disabled")))
+        f"[{name}]\n"
+        + format_auth_list(files, include_disabled=bool(arp.find("auth.list.disabled")), instance=name)
     ).finish()
 
 

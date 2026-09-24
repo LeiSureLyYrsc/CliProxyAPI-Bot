@@ -80,6 +80,22 @@ html, body {
   flex: 1 1 auto;
 }
 
+/* 账号卡片标题里的实例前缀（[实例名]）：固定不收缩，超长省略，避免撑破布局。 */
+.card-title-tag {
+  display: inline-block;
+  flex-shrink: 0;
+  max-width: 8em;
+  margin-right: 0.35em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  font-weight: 600;
+  opacity: 0.72;
+}
+
 .card-badges {
   display: flex;
   flex-wrap: wrap;

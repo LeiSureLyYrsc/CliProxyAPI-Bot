@@ -28,6 +28,7 @@ from ..model import (
     calculate_total_reset_credits,
     extract_earliest_reset_seconds,
     format_reset_zh,
+    prefix_instance,
     sort_windows,
     stamp_instance,
     window_is_used,
@@ -1238,16 +1239,17 @@ def _format_platform(section: PlatformQuota, account_limit: int) -> list[str]:
             flags.append("冷却中")
         flag = f" [{' '.join(flags)}]" if flags else ""
         plan = f" ({account.plan})" if account.plan else ""
+        shown = prefix_instance(account.instance, account.name)
         if account.error:
-            lines.append(f"  {account.name}{plan}{flag}  失败：{account.error}")
+            lines.append(f"  {shown}{plan}{flag}  失败：{account.error}")
             continue
         if not account.windows:
             raw_st = account.status or "unknown"
             st_text = "冷却中" if raw_st == "cooling" else raw_st
-            lines.append(f"  {account.name}{plan}{flag}  {st_text}（无上游额度）")
+            lines.append(f"  {shown}{plan}{flag}  {st_text}（无上游额度）")
             continue
         windows = " · ".join(_window_text(window, compact=True) for window in account.windows[:4])
-        lines.append(f"  {account.name}{plan}{flag}  {windows}")
+        lines.append(f"  {shown}{plan}{flag}  {windows}")
     extra = len(section.accounts) - len(visible)
     if extra > 0:
         lines.append(f"  ... 另有 {extra} 个账号，用 /quota {section.platform} 查看")

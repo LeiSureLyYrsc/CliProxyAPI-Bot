@@ -112,14 +112,39 @@ def parse_coding_plan_usage(payload: dict[str, Any]) -> tuple[list[QuotaWindow],
     return windows, status
 
 
-def account_from_usage(account: VolcengineAccount, payload: dict[str, Any]) -> AccountQuota:
-    """把单个火山账号的额度响应转为统一账号额度对象。"""
+def parse_personal_plan(payload: dict[str, Any]) -> str:
+    """从 ``GetPersonalPlan`` 响应里提取套餐档位名（如 ``Lite`` / ``Pro``）。
+
+    无 ``Result`` / ``PlanType`` 时返回空串（视为无套餐）。
+    """
+    if not isinstance(payload, dict):
+        return ""
+    result = payload.get("Result")
+    if not isinstance(result, dict):
+        return ""
+    for key in ("PlanType", "plan_type", "Plan", "plan"):
+        value = result.get(key)
+        if value:
+            return str(value).strip()
+    return ""
+
+
+def account_from_usage(
+    account: VolcengineAccount,
+    payload: dict[str, Any],
+    *,
+    plan: str = "",
+) -> AccountQuota:
+    """把单个火山账号的额度响应转为统一账号额度对象。
+
+    ``plan`` 来自 ``GetPersonalPlan`` 的档位名（Lite / Pro），仅用于卡片徽章展示。
+    """
     windows, status = parse_coding_plan_usage(payload)
     report = AccountQuota(
         platform="volcengine",
         name=account.name,
         auth_index="",
-        plan="",
+        plan=plan or "",
         status=status or "unknown",
     )
     if not windows:

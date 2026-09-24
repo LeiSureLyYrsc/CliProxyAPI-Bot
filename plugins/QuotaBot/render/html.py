@@ -10,6 +10,7 @@ from typing import Any
 
 from ..model import (
     AccountQuota,
+    MAX_ACCOUNT_NAME,
     PlatformQuota,
     QuotaBoard,
     QuotaWindow,
@@ -19,7 +20,9 @@ from ..model import (
     calculate_total_reset_credits,
     extract_earliest_reset_seconds,
     format_reset_zh,
+    instance_tag,
     sort_windows,
+    truncate_text,
     window_is_used,
 )
 
@@ -309,10 +312,14 @@ def _card_html(account: AccountQuota) -> str:
         f'<div class="card-badges">{"".join(badges)}</div>' if badges else ""
     )
 
+    # 标题 = [实例] 账号名（实例前缀单独包 span，便于独立限宽/省略）。
+    tag = instance_tag(account.instance)
+    shown_name = truncate_text(account.name, MAX_ACCOUNT_NAME)
+    tag_html = f'<span class="card-title-tag">[{html.escape(tag)}]</span>' if tag else ""
     head = (
         f'<div class="card-header">'
         f'<div class="title-row">'
-        f'<h3 class="card-title" title="{html.escape(account.name)}">{html.escape(account.name)}</h3>'
+        f'<h3 class="card-title" title="{html.escape(account.name)}">{tag_html}{html.escape(shown_name)}</h3>'
         f'{title_badges_html}'
         f'</div>'
         f'</div>'

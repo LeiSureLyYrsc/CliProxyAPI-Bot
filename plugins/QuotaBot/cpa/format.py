@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from ..model import instance_tag
+
 _CALLBACK_URL = re.compile(r"https?://[^\s<>\"']+", re.I)
 
 
@@ -112,7 +114,7 @@ def format_probe(
     return "\n".join(lines)
 
 
-def format_auth_line(file: dict[str, Any]) -> str:
+def format_auth_line(file: dict[str, Any], *, instance: str = "") -> str:
     provider = file.get("provider") or "?"
     status = file.get("status") or "?"
     flags: list[str] = []
@@ -124,7 +126,8 @@ def format_auth_line(file: dict[str, Any]) -> str:
     elif file.get("unavailable"):
         flags.append("unavailable")
     flag_text = f"  {' '.join(flags)}" if flags else ""
-    return f"[{provider}] {display_name(file, public=True)}  {status}  idx={short_index(file)}{flag_text}"
+    prefix = f"[{instance_tag(instance)}] " if instance_tag(instance) else ""
+    return f"{prefix}[{provider}] {display_name(file, public=True)}  {status}  idx={short_index(file)}{flag_text}"
 
 
 def visible_auth_files(files: list[dict[str, Any]], *, include_disabled: bool = False) -> list[dict[str, Any]]:
@@ -139,6 +142,7 @@ def format_auth_list(
     limit: int = 30,
     include_disabled: bool = False,
     empty: str = "",
+    instance: str = "",
 ) -> str:
     visible = visible_auth_files(files, include_disabled=include_disabled)
     if not visible:
@@ -148,7 +152,7 @@ def format_auth_list(
             else "没有凭证。"
         )
     shown = visible[:limit]
-    lines = [format_auth_line(file) for file in shown]
+    lines = [format_auth_line(file, instance=instance) for file in shown]
     if len(visible) > limit:
         lines.append(f"... 另有 {len(visible) - limit} 条未显示，请加 provider 过滤或用 show 精确查询")
     return "\n".join(lines)
@@ -190,10 +194,10 @@ def format_auth_detail(file: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def format_quota_list(files: list[dict[str, Any]]) -> str:
+def format_quota_list(files: list[dict[str, Any]], *, instance: str = "") -> str:
     if not files:
         return "当前没有异常或冷却中的凭证。"
-    return format_auth_list(files)
+    return format_auth_list(files, instance=instance)
 
 
 def format_models(models: list[Any]) -> str:
@@ -258,10 +262,10 @@ def extract_oauth_callback_url(text: str) -> str:
     return ""
 
 
-def format_ambiguous(query: str, files: list[dict[str, Any]]) -> str:
+def format_ambiguous(query: str, files: list[dict[str, Any]], *, instance: str = "") -> str:
     return (
         f"「{query}」匹配到多个凭证，请用更精确的名称或 auth_index：\n"
-        f"{format_auth_list(files, include_disabled=True)}"
+        f"{format_auth_list(files, include_disabled=True, instance=instance)}"
     )
 
 

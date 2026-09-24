@@ -105,7 +105,7 @@ async def _require_one(instance: str, query: str) -> dict[str, Any]:
         await UniMessage(f"没有找到凭证：{query}").finish()
         raise CPAError(f"没有找到凭证：{query}")
     if len(files) > 1:
-        await UniMessage(format_ambiguous(query, files)).finish()
+        await UniMessage(format_ambiguous(query, files, instance=instance)).finish()
         raise CPAError("匹配到多个凭证")
     return files[0]
 
@@ -129,7 +129,7 @@ async def _require_platform_account(instance: str, provider: str, query: str) ->
         await UniMessage(f"没有找到 [{platform}] 凭证：{query}").finish()
         raise CPAError(f"没有找到凭证：{query}")
     if len(matched) > 1:
-        await UniMessage(format_ambiguous(f"{platform} {query}", matched)).finish()
+        await UniMessage(format_ambiguous(f"{platform} {query}", matched, instance=instance)).finish()
         raise CPAError("匹配到多个凭证")
     return matched[0]
 

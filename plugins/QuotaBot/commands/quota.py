@@ -209,8 +209,7 @@ async def quota_cooling() -> None:
             continue
         cooling = [item for item in files if is_cooling(item)]
         if cooling:
-            lines.append(f"[{name}]")
-            lines.append(format_quota_list(cooling))
+            lines.append(format_quota_list(cooling, instance=name))
     await UniMessage("\n".join(lines) if lines else "当前没有冷却中的凭证。").finish()
 
 
@@ -422,7 +421,7 @@ async def _instance_quota_board(instance: str, selection: QuotaSelection) -> Quo
         if not matched:
             raise CPAError(f"[{instance}] 没有找到凭证：{selection.account}")
         if len(matched) > 1:
-            raise CPAError(f"[{instance}] " + format_ambiguous(selection.account, matched))
+            raise CPAError(format_ambiguous(selection.account, matched, instance=instance))
         target = matched
         single = True
     elif platform:

@@ -1,7 +1,7 @@
 """火山方舟（Volcengine）额度查询子包。
 
 - ``signer``：Volcengine Signature V4（纯标准库）
-- ``client``：控制面 OpenAPI 调用（GetCodingPlanUsage）
+- ``client``：控制面 OpenAPI 调用（GetCodingPlanUsage / GetPersonalPlan）
 - ``quota``：响应解析 → 统一额度窗口
 - ``provider``：按配置账号查询并组装额度板
 
@@ -10,9 +10,9 @@
 
 from __future__ import annotations
 
-from .client import VolcengineError, query_coding_plan_usage
+from .client import VolcengineError, query_coding_plan_usage, query_personal_plan
 from .provider import CHANNEL, collect_board
-from .quota import account_from_usage, parse_coding_plan_usage
+from .quota import account_from_usage, parse_coding_plan_usage, parse_personal_plan
 from .signer import sign_request
 
 __all__ = [
@@ -21,6 +21,8 @@ __all__ = [
     "account_from_usage",
     "collect_board",
     "parse_coding_plan_usage",
+    "parse_personal_plan",
     "query_coding_plan_usage",
+    "query_personal_plan",
     "sign_request",
 ]

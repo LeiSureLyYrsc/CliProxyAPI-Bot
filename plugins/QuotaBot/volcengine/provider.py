@@ -9,10 +9,19 @@ from .. import state
 from ..aliases import resolve_alias_for_keys
 from ..config import VolcengineAccount
 from ..model import AccountQuota, QuotaBoard, board_from_accounts
-from .client import VolcengineError, query_coding_plan_usage
-from .quota import account_from_usage
+from .client import VolcengineError, query_coding_plan_usage, query_personal_plan
+from .quota import account_from_usage, parse_personal_plan
 
 CHANNEL = "volcengine"
+
+
+async def _plan_of(account: VolcengineAccount) -> str:
+    """拉取套餐档位（Lite/Pro）；失败或无套餐返回空串，不影响额度查询。"""
+    try:
+        payload = await query_personal_plan(account)
+    except VolcengineError:
+        return ""
+    return parse_personal_plan(payload)
 
 
 async def collect_board(accounts: list[VolcengineAccount] | None = None) -> QuotaBoard:
@@ -20,14 +29,16 @@ async def collect_board(accounts: list[VolcengineAccount] | None = None) -> Quot
     configs = list(accounts if accounts is not None else state.get_snapshot().volcengine.accounts)
     reports: list[AccountQuota] = []
     for account in configs:
+        plan = await _plan_of(account)
         try:
             payload = await query_coding_plan_usage(account)
-            report = account_from_usage(account, payload)
+            report = account_from_usage(account, payload, plan=plan)
         except VolcengineError as exc:
             report = AccountQuota(
                 platform=CHANNEL,
                 name=account.name,
                 auth_index="",
+                plan=plan,
                 status="error",
                 error=str(exc),
             )
