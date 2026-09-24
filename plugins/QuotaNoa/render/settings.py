@@ -1,0 +1,133 @@
+"""额度图渲染设置（主题 / 每行卡片数）。
+
+设置现在存放在 ``data/quotanoa_config.json`` 的 ``render`` 段，由 ``state`` 统一
+做热重载与原子写入。本模块只负责校验与读写这一小段配置。
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Mapping
+
+from .themes import get_theme_registry
+
+DEFAULT_THEME = "default"
+DEFAULT_CARDS_PER_ROW = 4
+MIN_CARDS_PER_ROW = 1
+MAX_CARDS_PER_ROW = 6
+
+
+@dataclass
+class RenderSettings:
+    theme: str = DEFAULT_THEME
+    cards_per_row: int = DEFAULT_CARDS_PER_ROW
+    extra: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        data = dict(self.extra)
+        data["theme"] = self.theme
+        data["cards_per_row"] = self.cards_per_row
+        return data
+
+
+def normalize_theme(value: str) -> str:
+    text = (value or "").strip().lower()
+    registry = get_theme_registry()
+    if registry.is_valid_theme(text):
+        return registry.resolve_theme_name(text)
+    allowed = ", ".join(registry.list_canonical_names())
+    raise ValueError(f"未知主题「{value}」。可选主题：{allowed}")
+
+
+def normalize_theme_or_default(value: Any) -> str:
+    if not isinstance(value, str):
+        return DEFAULT_THEME
+    text = value.strip().lower()
+    registry = get_theme_registry()
+    return registry.resolve_theme_name(text)
+
+
+def normalize_cards_per_row(value: Any) -> int:
+    try:
+        num = int(value)
+    except (ValueError, TypeError):
+        raise ValueError(f"每行卡片数必须为 {MIN_CARDS_PER_ROW} 到 {MAX_CARDS_PER_ROW} 的整数。")
+    if not (MIN_CARDS_PER_ROW <= num <= MAX_CARDS_PER_ROW):
+        raise ValueError(f"每行卡片数必须为 {MIN_CARDS_PER_ROW} 到 {MAX_CARDS_PER_ROW} 的整数。")
+    return num
+
+
+def normalize_cards_per_row_or_default(value: Any) -> int:
+    try:
+        num = int(value)
+        if MIN_CARDS_PER_ROW <= num <= MAX_CARDS_PER_ROW:
+            return num
+    except (ValueError, TypeError):
+        pass
+    return DEFAULT_CARDS_PER_ROW
+
+
+def _render_section() -> Mapping[str, Any]:
+    from .. import state
+
+    render = state.get_snapshot().render
+    return {
+        "theme": render.theme,
+        "cards_per_row": render.cards_per_row,
+    }
+
+
+def get_render_settings() -> RenderSettings:
+    section = _render_section()
+    return RenderSettings(
+        theme=normalize_theme_or_default(section.get("theme")),
+        cards_per_row=normalize_cards_per_row_or_default(section.get("cards_per_row")),
+    )
+
+
+def _persist(theme: str, cards_per_row: int) -> RenderSettings:
+    from .. import state
+
+    state.update_config({"render": {"theme": theme, "cards_per_row": cards_per_row}})
+    return get_render_settings()
+
+
+def set_theme(theme_name: str) -> RenderSettings:
+    target = normalize_theme(theme_name)
+    current = get_render_settings()
+    return _persist(target, current.cards_per_row)
+
+
+def set_cards_per_row(count: int | str) -> RenderSettings:
+    target = normalize_cards_per_row(count)
+    current = get_render_settings()
+    return _persist(current.theme, target)
+
+
+# --------------------------------------------------------------------------- #
+# 测试辅助
+# --------------------------------------------------------------------------- #
+
+
+def use_memory_render_settings(data: RenderSettings | Mapping[str, Any] | None = None) -> None:
+    """测试用：把 render 段写入内存配置，不落盘。"""
+    from .. import state
+    from ..config import default_config_dict
+
+    if isinstance(data, RenderSettings):
+        raw = data.to_dict()
+    elif isinstance(data, Mapping):
+        raw = dict(data)
+    else:
+        raw = {}
+    theme = normalize_theme_or_default(raw.get("theme"))
+    cards = normalize_cards_per_row_or_default(raw.get("cards_per_row"))
+    payload = default_config_dict()
+    payload["render"] = {"theme": theme, "cards_per_row": cards}
+    state.use_memory_config(payload)
+
+
+def reset_render_settings_cache() -> None:
+    from .. import state
+
+    state.reset_state()

@@ -9,7 +9,7 @@ NoneBot2 + Alconna 插件，让管理员在聊天里操作 [CLIProxyAPI](https:/
 ```bash
 uv sync
 cp .env.example .env.prod   # Windows: Copy-Item .env.example .env.prod
-# 编辑 .env.prod：SUPERUSERS、适配器；插件业务配置在 data/quotabot_config.json
+# 编辑 .env.prod：SUPERUSERS、适配器；插件业务配置在 data/quotanoa_config.json
 
 # 要用额度卡片图时必须先装浏览器，否则自动回退文字
 uv run playwright install chromium
@@ -55,15 +55,15 @@ telegram_bots=[{"token": "123456:ABC-DEF"}]
 
 走系统 / 本地代理访问 Telegram API 时取消注释 `TELEGRAM_PROXY`。
 
-### QuotaBot 插件
+### QuotaNoa 插件
 
-业务配置（CPA 实例、火山凭据、渲染主题、别名文件路径）全部放在 `data/quotabot_config.json`，首次启动自动生成，支持热重载。`.env` 里只有这一项可选覆盖：
+业务配置（CPA 实例、火山凭据、渲染主题、别名文件路径）全部放在 `data/quotanoa_config.json`，首次启动自动生成，支持热重载。`.env` 里只有这一项可选覆盖：
 
 ```env
-# QUOTABOT_CONFIG_FILE=data/quotabot_config.json
+# QUOTANOA_CONFIG_FILE=data/quotanoa_config.json
 ```
 
-`quotabot_config.json` 结构：
+`quotanoa_config.json` 结构：
 
 ```jsonc
 {
@@ -90,8 +90,13 @@ telegram_bots=[{"token": "123456:ABC-DEF"}]
       { "name": "火山主号", "access_key_id": "AKLT…", "secret_access_key": "…", "region": "cn-beijing" }
     ]
   },
+  "workbuddy": {
+    "servers": [
+      { "name": "wb-main", "base_url": "http://127.0.0.1:7863", "api_key": "", "timeout": 30.0 }
+    ]
+  },
   "render": { "theme": "default", "cards_per_row": 4 },
-  "aliases_file": "data/quota_aliases.json"
+  "aliases_file": "data/quotanoa_aliases.json"
 }
 ```
 
@@ -100,10 +105,11 @@ telegram_bots=[{"token": "123456:ABC-DEF"}]
 | `cpa.instances[]` | 每个 CLIProxyAPI 实例一项，自带 `base_url` / `management_key` / 超时 / 并发 / 缓存 / 图片开关。`base_url` 可写 `http://host:8317` 或带 `/v0/management` 的完整前缀 |
 | `cpa.admins` / `cpa.codex_refresh_admin` | 全局权限名单（与实例无关） |
 | `volcengine.accounts` | 火山方舟 Coding Plan 查询凭据（控制面 AccessKey，需 `ArkReadOnlyAccess`） |
+| `workbuddy.servers[]` | 每个 WorkBuddy2API 网关一项：`base_url`（如 `http://host:7863`）、`api_key`（可空）、`timeout`。多个网关的账号会汇总到同一张 WorkBuddy 板，按网关名前缀区分 |
 | `render` | 额度图主题与每行卡片数（1..6），`/quota theme` `/quota card row` 可改 |
-| `aliases_file` | 分渠道别名文件，默认 `data/quota_aliases.json` |
+| `aliases_file` | 分渠道别名文件，默认 `data/quotanoa_aliases.json` |
 
-修改配置后**自动热重载**（也可 `/quota config reload` 强制）；`/quota config show` 查看当前生效值。旧的 `CPA_*` 环境变量与 `data/cpa_aliases.json` / `data/cpa_render_settings.json` 不再生效（启动时会告警，不做自动迁移）。旧的单实例 `cpa.base_url` 字段不再读取，请改为 `cpa.instances[]`。
+修改配置后**自动热重载**（也可 `/quota config reload` 强制）；`/quota config show` 查看当前生效值。旧的 `CPA_*` 环境变量与 `data/cpa_aliases.json` / `data/quota_aliases.json` / `data/quotabot_config.json` / `data/cpa_render_settings.json` 不再生效（启动时会告警，不做自动迁移）。旧的单实例 `cpa.base_url` 字段不再读取，请改为 `cpa.instances[]`。
 
 Bot 与 CPA 不在同一台机器时，CPA 需要 `remote-management.allow-remote: true`，或设置环境变量 `MANAGEMENT_PASSWORD`（会强制允许远程）。未配置任何管理密钥时，`/v0/management` 会 404。
 
@@ -116,8 +122,9 @@ Bot 与 CPA 不在同一台机器时，CPA 需要 `remote-management.allow-remot
 | 命令 | 作用 |
 | --- | --- |
 | `/quota` | **全部 CPA 实例**全平台额度汇总；无参数时显示帮助。多实例时按 `[实例名]` 前缀区分 |
-| `/quota <平台>` | 只看一个平台：`claude` / `codex`(gpt, openai) / `antigravity`(反重力) / `kimi` / `xai` |
+| `/quota <平台>` | 只看一个平台：`claude` / `codex`(gpt, openai) / `antigravity`(反重力, agy) / `kimi` / `xai` / `workbuddy`(wb) |
 | `/quota 火山` | 查询火山方舟 Coding Plan 额度（同义：`volc` / `volcengine` / `ark` / `火山方舟`） |
+| `/quota workbuddy` | 查询全部 WorkBuddy 网关的积分额度（同义：`wb`） |
 | `/quota <实例>` | 只查指定 CPA 实例。例：`/quota Home` |
 | `/quota <平台> <实例>` | 例：`/quota antigravity Home` 或 `/quota Home antigravity` |
 | `/quota <查询词>` | 单个账号的额度卡（跨全部实例搜索） |
@@ -129,6 +136,9 @@ Bot 与 CPA 不在同一台机器时，CPA 需要 `remote-management.allow-remot
 | `/quota volc list` | 列出火山方舟账号 |
 | `/quota volc add <名称> <AK> <SK> [region]` | 新增火山方舟账号（写入配置） |
 | `/quota volc remove <名称> --yes` | 删除火山方舟账号 |
+| `/quota wb list` | 列出 WorkBuddy 网关 |
+| `/quota wb add <名称> <base_url> [--key K] [--timeout N]` | 新增 WorkBuddy 网关（写入配置） |
+| `/quota wb remove <名称> --yes` | 删除 WorkBuddy 网关 |
 | `/quota alias list [--disabled]` | 列出账号显示别名（分渠道） |
 | `/quota alias set <渠道> <查询词> <别名>` | 为指定渠道账号设置别名 |
 | `/quota alias del <查询词>` | 删除别名（跨渠道全部删除） |
@@ -159,7 +169,18 @@ Bot 与 CPA 不在同一台机器时，CPA 需要 `remote-management.allow-remot
 | `cpa login cancel` | 取消当前登录 |
 | `cpa quota [平台] [实例] [--instance <实例>] [--fresh] [--text]` | 与 `/quota` 同义：默认查询**全部实例**。例：`cpa quota xai JP-AI` 只查 JP-AI 的 xAI 额度 |
 
-查询词可以是 email、文件名、label、别名或 `auth_index`（含前缀）。列表和额度图优先显示别名；未设别名时用 `渠道-短索引`，避免把邮箱发到聊天。同邮箱出现在多个渠道时用 `/quota alias set antigravity user@example.com AG-1`。详情 `cpa auth show` 仍会列出原始字段，便于对照。
+查询词可以是 email、文件名、label、别名或 `auth_index`（含前缀）。列表和额度图优先显示别名；未设别名时用 `渠道-短索引`，避免把邮箱发到聊天。同邮箱出现在多个渠道时用 `/quota alias set antigravity user@example.com AG-1`。WorkBuddy 账号也可绑别名：`/quota alias set workbuddy <uid> <别名>`。详情 `cpa auth show` 仍会列出原始字段，便于对照。
+
+别名文件 `data/quotanoa_aliases.json` 还支持**自定义渠道查询关键字**（保留键 `channel_keywords`，仅手改 JSON，不加命令、不影响出图/文本）：
+
+```json
+{
+  "channel_keywords": { "agy": "antigravity", "gpt": "codex", "火山方舟": "volcengine" },
+  "antigravity": { "user@example.com": "AG-1" }
+}
+```
+
+写入后 `/quota agy` 等同 `/quota antigravity`。渠道名必须能归一到内置渠道（`claude` / `codex` / `antigravity` / `kimi` / `xai` / `gemini-cli` / `volcengine` / `workbuddy`）。
 
 内置登录渠道：`claude` / `anthropic`、`codex`、`antigravity`、`kimi`、`xai`。若 CPA 插件声明了 `supports_oauth`，还会动态发现 `/{provider}-auth-url`。不要写死已从 core 移除的 `gemini-cli` / `qwen` / `iflow`。
 
@@ -188,7 +209,7 @@ CLIProxyAPI **没有**账号池额度聚合接口。`GET /auth-files` 只有健�
 所有额度图主题均存放在独立资源目录中，渲染器会自动扫描：
 
 ```text
-plugins/QuotaBot/render/assets/
+plugins/QuotaNoa/render/assets/
 ├─ quota.html
 ├─ base.css
 ├─ brands/
@@ -217,11 +238,11 @@ themes/<主题名>/
 
 新增主题时只需复制一个现有目录、修改目录名及上述四个文件，然后重启 Bot。主题目录名必须与 `theme.json` 中的 `name` 相同，并使用小写字母、数字、下划线或连字符。无需修改 Python 注册表或命令代码。运行时 CSS 和 wrapper 禁止脚本、事件处理器、`@import` 和远程 HTTP(S) 资源。
 
-默认主题的 canonical 名称为 `default`。旧配置中的 `"theme": "shadcn"` 会自动兼容并解析为 `default`。主题和卡片布局保存在 `data/quotabot_config.json` 的 `render` 段（`/quota theme`、`/quota card row` 修改），不使用主题相关环境变量。
+默认主题的 canonical 名称为 `default`。旧配置中的 `"theme": "shadcn"` 会自动兼容并解析为 `default`。主题和卡片布局保存在 `data/quotanoa_config.json` 的 `render` 段（`/quota theme`、`/quota card row` 修改），不使用主题相关环境变量。
 
 未安装 Chromium 时会自动回退文字，并提示执行 `playwright install chromium`（推荐：`uv run playwright install chromium`）。`cpa.quota_image=false` 或 `/quota --text` 可强制只要文字。
 
-支持的上游：Claude OAuth usage、Codex WHAM usage、Antigravity `retrieveUserQuotaSummary` + `loadCodeAssist`（套餐）、Kimi usages、xAI billing credits、**火山方舟 Coding Plan**（控制面 `GetCodingPlanUsage`）。Antigravity 的 `account_type=oauth` 只是登录方式，套餐来自 `paidTier`（Pro / Plus / Ultra）。未知 / API-key 渠道只显示本地健康状态。
+支持的上游：Claude OAuth usage、Codex WHAM usage、Antigravity `retrieveUserQuotaSummary` + `loadCodeAssist`（套餐）、Kimi usages、xAI billing credits、**火山方舟 Coding Plan**（控制面 `GetCodingPlanUsage`）、**WorkBuddy2API**（`GET /v1/quota`，聚合积分 + 套餐数）。Antigravity 的 `account_type=oauth` 只是登录方式，套餐来自 `paidTier`（Pro / Plus / Ultra）。未知 / API-key 渠道只显示本地健康状态。
 
 火山方舟凭据请用**控制面 OpenAPI** 的 AccessKey ID + SecretAccessKey（`volcengine.accounts[]`，需子账户具备 `ArkReadOnlyAccess` 权限），**不是**推理 Key（`ark-...` 查不了额度）。Bot 直接对 `open.volcengineapi.com` 做 SigV4 签名请求。
 
