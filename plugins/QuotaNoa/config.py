@@ -243,6 +243,25 @@ class WorkbuddyConfig:
 
 
 @dataclass(frozen=True)
+class QoderServer:
+    """单个 Qoder2OAPI 代理。
+
+    - ``base_url`` 形如 ``http://127.0.0.1:8000``。
+    - ``api_key`` 为代理 API Key（Bearer），来自 data/api_key.txt 或环境变量。
+    """
+
+    name: str
+    base_url: str = "http://127.0.0.1:8000"
+    api_key: str = ""
+    timeout: float = 30.0
+
+
+@dataclass(frozen=True)
+class QoderConfig:
+    servers: tuple[QoderServer, ...] = ()
+
+
+@dataclass(frozen=True)
 class RenderConfig:
     """额度图渲染设置。theme 保持原始字符串，由渲染层解析为 canonical 名。"""
 
@@ -269,6 +288,7 @@ class ConfigSnapshot:
     cpa: CpaConfig = field(default_factory=CpaConfig)
     volcengine: VolcengineConfig = field(default_factory=VolcengineConfig)
     workbuddy: WorkbuddyConfig = field(default_factory=WorkbuddyConfig)
+    qoder: QoderConfig = field(default_factory=QoderConfig)
     render: RenderConfig = field(default_factory=RenderConfig)
     refreshcache: RefreshCacheConfig = field(default_factory=RefreshCacheConfig)
     #: 别名文件路径；默认由本模块的 ``DEFAULT_ALIASES_FILE`` 决定，
@@ -334,6 +354,17 @@ class ConfigSnapshot:
                         "timeout": server.timeout,
                     }
                     for server in self.workbuddy.servers
+                ]
+            },
+            "qoder": {
+                "servers": [
+                    {
+                        "name": server.name,
+                        "base_url": server.base_url,
+                        "api_key": server.api_key,
+                        "timeout": server.timeout,
+                    }
+                    for server in self.qoder.servers
                 ]
             },
             "refreshcache": {
@@ -459,6 +490,42 @@ def _parse_workbuddy(raw: Any) -> WorkbuddyConfig:
     return WorkbuddyConfig(servers=tuple(servers))
 
 
+def _parse_qoder(raw: Any) -> QoderConfig:
+    data = _as_mapping(raw)
+    raw_servers = data.get("servers")
+    servers: list[QoderServer] = []
+    seen: set[str] = set()
+    if isinstance(raw_servers, (list, tuple)):
+        for item in raw_servers:
+            entry = _as_mapping(item)
+            raw_name = _as_str(entry.get("name"))
+            name = normalize_name(raw_name)
+            base_url = _strip_trailing_slash(
+                _as_str(entry.get("base_url"), "http://127.0.0.1:8000")
+            )
+            if not name or not base_url or name in seen:
+                continue
+            if not valid_name(name):
+                raise ConfigError(
+                    f"qoder.servers 中代理名称非法：{raw_name}（1–{MAX_NAME_LEN} 字符，不能含空白或 / \\ :）"
+                )
+            if is_channel_name(name):
+                raise ConfigError(
+                    f"qoder.servers 代理名称不能与渠道名称同名：{raw_name}。"
+                    "请换一个名字（如 qoder-main、qoder-backup）。"
+                )
+            seen.add(name)
+            servers.append(
+                QoderServer(
+                    name=name,
+                    base_url=base_url,
+                    api_key=_as_str(entry.get("api_key")),
+                    timeout=max(1.0, _as_float(entry.get("timeout"), 30.0)),
+                )
+            )
+    return QoderConfig(servers=tuple(servers))
+
+
 def _parse_render(raw: Any) -> RenderConfig:
     data = _as_mapping(raw)
     theme = _as_str(data.get("theme"), DEFAULT_THEME) or DEFAULT_THEME
@@ -488,6 +555,7 @@ def snapshot_from_raw(raw: Mapping[str, Any]) -> ConfigSnapshot:
         cpa=_parse_cpa(raw.get("cpa")),
         volcengine=_parse_volcengine(raw.get("volcengine")),
         workbuddy=_parse_workbuddy(raw.get("workbuddy")),
+        qoder=_parse_qoder(raw.get("qoder")),
         render=_parse_render(raw.get("render")),
         refreshcache=_parse_refreshcache(raw.get("refreshcache")),
         aliases_file=aliases_file,

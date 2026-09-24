@@ -104,6 +104,8 @@ WINDOW_ORDER = (
     "grok-imagine",
     "usage",
     "wb-credits",
+    "qoder-general",
+    "qoder-addon",
 )
 
 
@@ -130,6 +132,8 @@ CHANNEL_ALIASES = {
     "workbuddy": "workbuddy",
     "work-buddy": "workbuddy",
     "wb": "workbuddy",
+    "qoder": "qoder",
+    "qd": "qoder",
 }
 
 #: 平台展示标题。
@@ -141,6 +145,7 @@ PLATFORM_TITLES = {
     "xai": "xAI / Grok",
     "gemini-cli": "Gemini CLI",
     "volcengine": "火山方舟",
+    "qoder": "Qoder",
     "workbuddy": "WorkBuddy",
     "other": "其他",
 }
@@ -154,6 +159,7 @@ PLATFORM_ORDER = (
     "xai",
     "gemini-cli",
     "volcengine",
+    "qoder",
     "workbuddy",
     "other",
 )
@@ -218,6 +224,8 @@ def _classify_model_category(window_id: str, window_label: str = "") -> str:
 
     if wid.startswith("volc-") or "火山" in lbl or "volcengine" in lbl:
         return "火山"
+    if wid.startswith("qoder-") or "qoder" in lbl:
+        return "Qoder"
     if wid.startswith("wb-") or "workbuddy" in lbl:
         return "WorkBuddy"
     if wid.startswith("gemini-") or lbl.startswith("gemini"):
@@ -257,7 +265,7 @@ def _classify_period_category(window_id: str, window_label: str = "") -> str:
     return "其他额度"
 
 
-_MODEL_CATEGORY_ORDER = ("Gemini", "Claude/GPT", "Codex", "Claude", "xAI", "Kimi", "WorkBuddy")
+_MODEL_CATEGORY_ORDER = ("Gemini", "Claude/GPT", "Codex", "Claude", "xAI", "Kimi", "Qoder", "WorkBuddy")
 _PERIOD_CATEGORY_ORDER = ("小时额度", "周额度", "月额度", "其他额度")
 
 

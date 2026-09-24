@@ -49,6 +49,7 @@ _BADGES = {
     "xai": "xAI",
     "gemini-cli": "GM",
     "volcengine": "VOLC",
+    "qoder": "QD",
     "workbuddy": "WB",
     "other": "?",
 }
@@ -62,6 +63,7 @@ _GROUP_TITLES = {
     "kimi": "Usage",
     "volc": "额度",
     "wb": "积分",
+    "qoder": "积分",
     "other": "Quota",
 }
 
@@ -435,6 +437,8 @@ def _group_key(window_id: str) -> str:
         return "volc"
     if window_id.startswith("wb-"):
         return "wb"
+    if window_id.startswith("qoder-"):
+        return "qoder"
     if window_id.startswith("gemini-"):
         return "gemini"
     if window_id.startswith("claude-gpt-"):

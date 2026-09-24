@@ -28,7 +28,7 @@ from ..model import normalize_channel
 
 #: CPA 平台/渠道关键字（供 alias set 校验渠道名时复用）。
 KNOWN_CHANNELS = (
-    "claude / codex(gpt, openai) / antigravity(反重力, agy) / kimi / xai / gemini-cli / 火山(volcengine, ark) / workbuddy(wb)"
+    "claude / codex(gpt, openai) / antigravity(反重力, agy) / kimi / xai / gemini-cli / 火山(volcengine, ark) / workbuddy(wb) / qoder"
 )
 
 
@@ -213,10 +213,49 @@ async def _workbuddy_candidates() -> list[tuple[str, dict[str, Any]]]:
     return collected
 
 
+async def _qoder_candidates() -> list[tuple[str, dict[str, Any]]]:
+    """把 Qoder 代理账号伪装成凭证字典，供别名绑定复用同一套匹配逻辑。"""
+    from ..qoder.client import QoderError, fetch_credits
+
+    servers = state.get_snapshot().qoder.servers
+    collected: list[tuple[str, dict[str, Any]]] = []
+    for server in servers:
+        try:
+            payload = await fetch_credits(server)
+        except QoderError:
+            continue
+        rows = payload.get("accounts") if isinstance(payload, dict) else None
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            uid = str(row.get("id") or "").strip()
+            if not uid:
+                continue
+            name = str(row.get("name") or row.get("email") or row.get("user_id") or "").strip()
+            flags = row.get("flags")
+            disabled = bool(flags.get("skip_auth")) if isinstance(flags, dict) else False
+            collected.append(
+                (
+                    server.name,
+                    {
+                        "provider": "qoder",
+                        "auth_index": uid,
+                        "name": name or uid,
+                        "label": name,
+                        "disabled": disabled,
+                    },
+                )
+            )
+    return collected
+
+
 async def _collect_alias_across() -> list[tuple[str, dict[str, Any]]]:
-    """别名绑定用的候选：CPA 凭证 + WorkBuddy 网关账号。"""
+    """别名绑定用的候选：CPA 凭证 + WorkBuddy 网关账号 + Qoder 代理账号。"""
     collected = await _collect_across()
     collected.extend(await _workbuddy_candidates())
+    collected.extend(await _qoder_candidates())
     return collected
 
 
@@ -261,8 +300,8 @@ async def _require_platform_account_across(provider: str, query: str) -> tuple[s
             f"渠道如：{KNOWN_CHANNELS}"
         ).finish()
         raise CPAError(f"未知渠道：{provider}")
-    # WorkBuddy 是本地渠道（网关账号），不在 CPA 凭证里；纳入候选才能绑别名。
-    candidates = await _collect_alias_across() if platform == "workbuddy" else await _collect_across()
+    # WorkBuddy / Qoder 是本地渠道（网关/代理账号），不在 CPA 凭证里；纳入候选才能绑别名。
+    candidates = await _collect_alias_across() if platform in {"workbuddy", "qoder"} else await _collect_across()
     matched: list[tuple[str, dict[str, Any]]] = []
     for instance, file in candidates:
         if platform_of(file) != platform:

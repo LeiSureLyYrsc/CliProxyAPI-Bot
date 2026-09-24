@@ -34,6 +34,7 @@ from ..query import QuotaSelection, parse_quota_command, strip_quota_head, token
 from ..render.html import RenderError, render_board_images
 from ..volcengine.provider import collect_board as collect_volcengine_board
 from ..wb.provider import collect_board as collect_workbuddy_board
+from ..qoder.provider import collect_board as collect_qoder_board
 
 from .common import CPA_ADMIN, _require_one_across, _text, _without
 
@@ -121,6 +122,25 @@ quota = on_alconna(
             ),
             help_text="WorkBuddy 网关额度查询与管理",
         ),
+        Subcommand(
+            "qoder|qd",
+            Subcommand("list", help_text="列出 Qoder 代理"),
+            Subcommand(
+                "add",
+                Args["name", str]["base_url", str],
+                Option("--key", Args["key", str], dest="key", help_text="代理 API Key（Bearer）"),
+                Option("--timeout", Args["timeout", str], dest="timeout", help_text="请求超时秒"),
+                help_text="新增 Qoder 代理：/quota qoder add <名称> <base_url> --key <API_KEY>",
+            ),
+            Subcommand(
+                "remove|rm|delete",
+                Args["name", str],
+                Option("--yes|-y", action=store_true, dest="yes", help_text="确认删除"),
+                dest="remove",
+                help_text="删除 Qoder 代理",
+            ),
+            help_text="Qoder2OAPI 代理额度查询与管理",
+        ),
         Args["a?", str]["b?", str]["tail", MultiVar(str, "*")],
         meta=CommandMeta(
             description="额度查询（仅管理员）",
@@ -177,7 +197,7 @@ def _quota_help_text() -> str:
             "  /quota",
             "    全部 CPA 实例全平台额度汇总。",
             "  /quota <平台>",
-            "    claude / codex(gpt, openai) / antigravity(反重力, agy) / kimi / xai / 火山(volcengine, ark) / workbuddy(wb)",
+            "    claude / codex(gpt, openai) / antigravity(反重力, agy) / kimi / xai / 火山(volcengine, ark) / workbuddy(wb) / qoder(qd)",
             "  /quota <实例>",
             "    只查指定 CPA 实例。例：/quota Home",
             "  /quota <平台> <实例>",
@@ -208,6 +228,12 @@ def _quota_help_text() -> str:
             "  /quota wb add <名称> <base_url> --user U --pass P [--timeout N]",
             "  /quota wb login <名称>  校验账号密码并刷新会话",
             "  /quota wb remove <名称> --yes",
+            "",
+            "【Qoder】本地渠道，代理存 data/quotanoa_config.json 的 qoder.servers。",
+            "  /quota qoder           查询全部代理号池额度（同 qd）",
+            "  /quota qoder list",
+            "  /quota qoder add <名称> <base_url> --key <API_KEY> [--timeout N]",
+            "  /quota qoder remove <名称> --yes",
             "",
             "【主题与排版】修改后立刻生效并持久化。",
             "  /quota theme           查看当前主题与可选主题",
@@ -387,6 +413,10 @@ async def quota_view(event: Event) -> None:
     if selection.platform == "workbuddy":
         await _send_workbuddy_results(snapshot.cpa, selection)
         return
+    # Qoder：本地渠道，凭据来自 qoder.servers。
+    if selection.platform == "qoder":
+        await _send_qoder_results(snapshot.cpa, selection)
+        return
     targets = _quota_targets(selection)
     if targets is None:
         return
@@ -463,6 +493,22 @@ async def _send_workbuddy_results(cpa: CpaConfig, selection: QuotaSelection) -> 
     await _send_quota_results(cpa, [("WorkBuddy", board)], want_text=selection.text, multi=False)
 
 
+async def _send_qoder_results(cpa: CpaConfig, selection: QuotaSelection) -> None:
+    servers = list(state.get_snapshot().qoder.servers)
+    if not servers:
+        await UniMessage(
+            "未配置 Qoder 代理。新增：/quota qoder add <名称> <base_url> --key <API_KEY>"
+        ).finish()
+        return
+    await UniMessage("正在查询 Qoder 额度…").send()
+    try:
+        board = await collect_qoder_board(servers, force=selection.fresh)
+    except Exception as exc:  # noqa: BLE001 - 兜底，避免单渠道异常打断消息处理
+        await UniMessage(f"Qoder 额度查询失败：{exc}").finish()
+        return
+    await _send_quota_results(cpa, [("Qoder", board)], want_text=selection.text, multi=False)
+
+
 def _custom_channel_keywords() -> dict[str, str]:
     """用户自定义渠道关键字（quotanoa_aliases.json 的 channel_keywords）。"""
     try:
@@ -495,6 +541,20 @@ async def quota_workbuddy(event: Event) -> None:
         extra_channels=_custom_channel_keywords(),
     )
     await _send_workbuddy_results(state.get_snapshot().cpa, selection)
+
+
+@quota.assign(
+    "qoder",
+    additional=_without("qoder.list", "qoder.add", "qoder.remove"),
+)
+async def quota_qoder(event: Event) -> None:
+    """`/quota qoder`：查询 Qoder 全部代理号池额度（渠道查询，不查单个账号）。"""
+    selection = parse_quota_command(
+        event.get_plaintext(),
+        known_instances=set(state.get_snapshot().cpa.names()),
+        extra_channels=_custom_channel_keywords(),
+    )
+    await _send_qoder_results(state.get_snapshot().cpa, selection)
 
 
 def _quota_targets(selection: QuotaSelection) -> list[str] | None:

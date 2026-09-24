@@ -15,6 +15,7 @@ from . import alias as alias  # noqa: E402, F401  (注册 /quota alias)
 from . import theme as theme  # noqa: E402, F401  (注册 /quota theme / card)
 from . import config as config  # noqa: E402, F401  (注册 /quota config)
 from . import wb as wb  # noqa: E402, F401  (注册 /quota wb 网关管理)
+from . import qoder as qoder  # noqa: E402, F401  (注册 /quota qoder 代理管理)
 from . import cpa as cpa  # noqa: E402, F401  (注册 /cpa 管理根)
 
 

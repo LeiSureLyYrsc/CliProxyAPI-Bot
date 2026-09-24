@@ -95,6 +95,11 @@ telegram_bots=[{"token": "123456:ABC-DEF"}]
       { "name": "wb-main", "base_url": "http://127.0.0.1:7863", "username": "admin", "password": "workbuddy", "timeout": 30.0 }
     ]
   },
+  "qoder": {
+    "servers": [                       // Qoder2OAPI 代理服务
+      { "name": "qoder-main", "base_url": "http://127.0.0.1:8000", "api_key": "…", "timeout": 30.0 }
+    ]
+  },
   "refreshcache": {
     "default": 60,                 // 未单独配置渠道的默认缓存秒数（0 = 不缓存）
     "channels": {                  // 按渠道覆盖；键为渠道名（claude/codex/火山/workbuddy…）
@@ -113,6 +118,7 @@ telegram_bots=[{"token": "123456:ABC-DEF"}]
 | `cpa.admins` / `cpa.codex_refresh_admin` | 全局权限名单（与实例无关） |
 | `volcengine.accounts` | 火山方舟 Coding Plan 查询凭据（控制面 AccessKey，需 `ArkReadOnlyAccess`） |
 | `workbuddy.servers[]` | 每个 WorkBuddy2API 网关一项：`base_url`（如 `http://host:7863`）、`username` + `password`（控制台账号，插件自动登录换 `api_key`）、可选 `api_key`（跳过登录直连）、`timeout`。多个网关的账号会汇总到同一张 WorkBuddy 板，按网关名前缀区分 |
+| `qoder.servers[]` | 每个 Qoder2OAPI 代理一项：`name`、`base_url`（如 `http://127.0.0.1:8000`）、`api_key`、`timeout`。多个代理的号池账号会汇总到同一张 Qoder 板，按代理名前缀区分 |
 | `refreshcache` | 各渠道查询结果的缓存秒数：`default` 为兜底，`channels` 按渠道名覆盖（支持别名如 `gpt`/`火山` 归一）。CPA 实例未命中渠道覆盖时回退到实例 `quota_cache_ttl`；`0` 表示该渠道不缓存。`/quota --fresh` 仍强制重查 |
 | `render` | 额度图主题与每行卡片数（1..6），`/quota theme` `/quota card row` 可改 |
 
@@ -131,9 +137,10 @@ Bot 与 CPA 不在同一台机器时，CPA 需要 `remote-management.allow-remot
 | 命令 | 作用 |
 | --- | --- |
 | `/quota` | **全部 CPA 实例**全平台额度汇总；无参数时显示帮助。多实例时按 `[实例名]` 前缀区分 |
-| `/quota <平台>` | 只看一个平台：`claude` / `codex`(gpt, openai) / `antigravity`(反重力, agy) / `kimi` / `xai` / `workbuddy`(wb) |
+| `/quota <平台>` | 只看一个平台：`claude` / `codex`(gpt, openai) / `antigravity`(反重力, agy) / `kimi` / `xai` / `workbuddy`(wb) / `qoder` |
 | `/quota 火山` | 查询火山方舟 Coding Plan 额度（同义：`volc` / `volcengine` / `ark` / `火山方舟`） |
 | `/quota workbuddy` | 查询全部 WorkBuddy 网关的积分额度（同义：`wb`） |
+| `/quota qoder` | 查询全部 Qoder2OAPI 代理的号池额度（同义：`qd`） |
 | `/quota <实例>` | 只查指定 CPA 实例。例：`/quota Home` |
 | `/quota <平台> <实例>` | 例：`/quota antigravity Home` 或 `/quota Home antigravity` |
 | `/quota <查询词>` | 单个账号的额度卡（跨全部实例搜索） |
@@ -149,6 +156,9 @@ Bot 与 CPA 不在同一台机器时，CPA 需要 `remote-management.allow-remot
 | `/quota wb add <名称> <base_url> --user U --pass P [--timeout N]` | 新增 WorkBuddy 网关（用控制台账号密码；也可 `--key` 直连）。写入配置 |
 | `/quota wb login <名称>` | 校验账号密码并刷新会话 |
 | `/quota wb remove <名称> --yes` | 删除 WorkBuddy 网关 |
+| `/quota qoder list` | 列出 Qoder2OAPI 代理 |
+| `/quota qoder add <名称> <base_url> --key <API_KEY> [--timeout N]` | 新增 Qoder2OAPI 代理（写入配置） |
+| `/quota qoder remove <名称> --yes` | 删除 Qoder2OAPI 代理 |
 | `/quota alias list [--disabled]` | 列出账号显示别名（分渠道） |
 | `/quota alias set <渠道> <查询词> <别名>` | 为指定渠道账号设置别名 |
 | `/quota alias del <查询词>` | 删除别名（跨渠道全部删除） |
@@ -191,7 +201,7 @@ Bot 与 CPA 不在同一台机器时，CPA 需要 `remote-management.allow-remot
 }
 ```
 
-写入后 `/quota agy` 等同 `/quota antigravity`。渠道名必须能归一到内置渠道（`claude` / `codex` / `antigravity` / `kimi` / `xai` / `gemini-cli` / `volcengine` / `workbuddy`）。
+写入后 `/quota agy` 等同 `/quota antigravity`。渠道名必须能归一到内置渠道（`claude` / `codex` / `antigravity` / `kimi` / `xai` / `gemini-cli` / `volcengine` / `workbuddy` / `qoder`）。
 
 WorkBuddy 卡片/文字里的倒计时是**重置**语义，固定显示为 `最早的(空)套餐 XdXh 后过期`，表示该账号所有周期套餐中**最先到期**的那个还剩多久；其进度条百分比则是**所有套餐聚合**的剩余比例，两者口径不同。
 
@@ -255,7 +265,7 @@ themes/<主题名>/
 
 未安装 Chromium 时会自动回退文字，并提示执行 `playwright install chromium`（推荐：`uv run playwright install chromium`）。`cpa.quota_image=false` 或 `/quota --text` 可强制只要文字。
 
-支持的上游：Claude OAuth usage、Codex WHAM usage、Antigravity `retrieveUserQuotaSummary` + `loadCodeAssist`（套餐）、Kimi usages、xAI billing credits、**火山方舟 Coding Plan**（控制面 `GetCodingPlanUsage`）、**WorkBuddy2API**（`GET /v1/quota`，聚合积分 + 套餐数）。Antigravity 的 `account_type=oauth` 只是登录方式，套餐来自 `paidTier`（Pro / Plus / Ultra）。未知 / API-key 渠道只显示本地健康状态。
+支持的上游：Claude OAuth usage、Codex WHAM usage、Antigravity `retrieveUserQuotaSummary` + `loadCodeAssist`（套餐）、Kimi usages、xAI billing credits、**火山方舟 Coding Plan**（控制面 `GetCodingPlanUsage`）、**WorkBuddy2API**（`GET /v1/quota`，聚合积分 + 套餐数）、**Qoder2OAPI**（`GET /v1/dashboard/billing/credits`，号池聚合 + 每账号 general/addon/dedicated 分桶；账号 `user_type` 会映射为订阅档位：个人 = 体验版 / 专业版 / 高级版 / 旗舰版，企业 = 团队版 / 企业标准版，兼容 `personal_professional` 与 `PLAN_TIER_*` / `ORGANIZATION_PLAN_TIER_*` 两种写法）。Antigravity 的 `account_type=oauth` 只是登录方式，套餐来自 `paidTier`（Pro / Plus / Ultra）。未知 / API-key 渠道只显示本地健康状态。
 
 火山方舟凭据请用**控制面 OpenAPI** 的 AccessKey ID + SecretAccessKey（`volcengine.accounts[]`，需子账户具备 `ArkReadOnlyAccess` 权限），**不是**推理 Key（`ark-...` 查不了额度）。Bot 直接对 `open.volcengineapi.com` 做 SigV4 签名请求。
 

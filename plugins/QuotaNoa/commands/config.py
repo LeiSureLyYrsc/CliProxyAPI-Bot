@@ -56,6 +56,20 @@ async def quota_config_show() -> None:
     lines.extend(
         [
             "",
+            "qoder：",
+        ]
+    )
+    if snapshot.qoder.servers:
+        for server in snapshot.qoder.servers:
+            api_key = (mask_secret(server.api_key) if server.api_key else "") or "（未设置）"
+            lines.append(
+                f"  - {server.name}  {server.base_url}  api_key={api_key}  timeout={server.timeout:g}s"
+            )
+    else:
+        lines.append("  代理：（未配置）")
+    lines.extend(
+        [
+            "",
             "refreshcache：",
             f"  default：{snapshot.refreshcache.default:g}s",
             "",
