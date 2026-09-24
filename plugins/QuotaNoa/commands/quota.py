@@ -1,4 +1,4 @@
-"""/quota 根命令：额度查询 + 别名 / 主题 / 卡片 / 配置 / 火山实例 子命令。
+"""/quotanoa 根命令：额度查询 + 别名 / 主题 / 卡片 / 配置 / 火山实例 子命令。
 
 根前缀固定为 `/`（用户要求“quota 必须使用指令头”），裸 `quota` 不匹配。
 查询主体（平台 / 实例 / 账号 / --fresh 等）由 ``query.parse_quota_command``
@@ -39,7 +39,7 @@ from ..qoder.provider import collect_board as collect_qoder_board
 
 from .common import CPA_ADMIN, _require_one_across, _text, _without
 
-#: /quota all 与默认查询使用的本地渠道顺序。
+#: /quotanoa all 与默认查询使用的本地渠道顺序。
 LOCAL_CHANNEL_LABELS = {"volcengine": "火山", "workbuddy": "WorkBuddy", "qoder": "Qoder"}
 
 #: 触发帮助的查询词（裸命令不再显示帮助）。
@@ -55,7 +55,7 @@ def _resolve_default_channels(configured: Sequence[str], entry: str) -> tuple[st
     """无参数查询默认渠道集；返回 None 表示走全部 CPA 实例（现状）。
 
     - 配置 cpa.quota_default_channels 非空：两个入口都只查列表内本地渠道。
-    - 配置为空：非对称——/quota 默认查全部本地渠道，/cpa quota 默认查全部 CPA 实例。
+    - 配置为空：非对称——/quotanoa 默认查全部本地渠道，/cpa quota 默认查全部 CPA 实例。
     """
     if configured:
         return tuple(configured)
@@ -71,7 +71,7 @@ def _resolve_default_channels(configured: Sequence[str], entry: str) -> tuple[st
 quota = on_alconna(
     Alconna(
         ["/"],
-        "quota",
+        "quotanoa",
         Subcommand("help", help_text="查看帮助"),
         Subcommand("cooling", help_text="仅看冷却中的凭证"),
         Subcommand("reset", Args["query", str], help_text="清除配额/冷却并恢复路由"),
@@ -85,19 +85,19 @@ quota = on_alconna(
             Subcommand(
                 "set",
                 Args["a", str]["b", str]["c?", str],
-                help_text="设置别名：/quota alias set <渠道> <查询词> <别名>",
+                help_text="设置别名：/quotanoa alias set <渠道> <查询词> <别名>",
             ),
             Subcommand("del|rm|delete", Args["query", str], dest="delete", help_text="删除别名"),
             help_text="分渠道账号别名",
         ),
         Subcommand(
             "theme",
-            Subcommand("set", Args["name", str], help_text="设置额度图主题：/quota theme set <主题>"),
+            Subcommand("set", Args["name", str], help_text="设置额度图主题：/quotanoa theme set <主题>"),
             help_text="查看或设置额度图主题",
         ),
         Subcommand(
             "card",
-            Subcommand("row", Args["count", str], help_text="设置每行卡片数：/quota card row 1..6"),
+            Subcommand("row", Args["count", str], help_text="设置每行卡片数：/quotanoa card row 1..6"),
             help_text="查看或设置卡片布局排版",
         ),
         Subcommand(
@@ -112,7 +112,7 @@ quota = on_alconna(
             Subcommand(
                 "add",
                 Args["name", str]["ak", str]["sk", str]["region?", str],
-                help_text="新增火山方舟账号：/quota volc add <名称> <AK> <SK> [region]",
+                help_text="新增火山方舟账号：/quotanoa volc add <名称> <AK> <SK> [region]",
             ),
             Subcommand(
                 "remove|rm|delete",
@@ -133,12 +133,12 @@ quota = on_alconna(
                 Option("--pass", Args["password", str], dest="password", help_text="控制台密码"),
                 Option("--key", Args["key", str], dest="key", help_text="网关 api_key（跳过登录）"),
                 Option("--timeout", Args["timeout", str], dest="timeout", help_text="请求超时秒"),
-                help_text="新增 WorkBuddy 网关：/quota wb add <名称> <base_url> --user U --pass P",
+                help_text="新增 WorkBuddy 网关：/quotanoa wb add <名称> <base_url> --user U --pass P",
             ),
             Subcommand(
                 "login",
                 Args["name", str],
-                help_text="校验账号密码并刷新会话：/quota wb login <名称>",
+                help_text="校验账号密码并刷新会话：/quotanoa wb login <名称>",
             ),
             Subcommand(
                 "remove|rm|delete",
@@ -157,7 +157,7 @@ quota = on_alconna(
                 Args["name", str]["base_url", str],
                 Option("--key", Args["key", str], dest="key", help_text="代理 API Key（Bearer）"),
                 Option("--timeout", Args["timeout", str], dest="timeout", help_text="请求超时秒"),
-                help_text="新增 Qoder 代理：/quota qoder add <名称> <base_url> --key <API_KEY>",
+                help_text="新增 Qoder 代理：/quotanoa qoder add <名称> <base_url> --key <API_KEY>",
             ),
             Subcommand(
                 "remove|rm|delete",
@@ -171,8 +171,8 @@ quota = on_alconna(
         Args["a?", str]["b?", str]["tail", MultiVar(str, "*")],
         meta=CommandMeta(
             description="额度查询（仅管理员）",
-            usage="发送 /quota 查看帮助；/quota 火山 查火山方舟",
-            example="/quota\n/quota 火山\n/quota claude\n/quota claude Home\n/quota --fresh\n/quota cooling\n/quota reset user@example.com\n/quota alias set antigravity user@example.com AG-1\n/quota volc add 火山主号 AK SK\n/quota config show",
+            usage="发送 /quotanoa 查看帮助；/quotanoa 火山 查火山方舟",
+            example="/quotanoa\n/quotanoa 火山\n/quotanoa claude\n/quotanoa claude Home\n/quotanoa --fresh\n/quotanoa cooling\n/quotanoa reset user@example.com\n/quotanoa alias set antigravity user@example.com AG-1\n/quotanoa volc add 火山主号 AK SK\n/quotanoa config show",
         ),
     ),
     permission=CPA_ADMIN,
@@ -194,12 +194,12 @@ async def quota_help() -> None:
 
 
 async def quota_entry(event: Event, *, entry: str = "quota") -> None:
-    """共享入口：/quota 与 /cpa quota 复用。
+    """共享入口：/quotanoa 与 /cpa quota 复用。
 
     ``entry`` 区分入口（"quota" / "cpa"），决定无参数时的默认渠道集：
     配置 cpa.quota_default_channels 非空时两个入口都只查列表内本地渠道；
-    为空时非对称：/quota 默认查全部本地渠道，/cpa quota 默认查全部 CPA 实例。
-    查询：/quota help（或 --help / -h）显示帮助。
+    为空时非对称：/quotanoa 默认查全部本地渠道，/cpa quota 默认查全部 CPA 实例。
+    查询：/quotanoa help（或 --help / -h）显示帮助。
     """
     if _is_help_request(strip_quota_head(tokenize(event.get_plaintext()))):
         await UniMessage(_quota_help_text()).finish()
@@ -218,62 +218,62 @@ def _quota_help_text() -> str:
             "命令固定带 / 前缀（指令头）。",
             "",
             "【查询】默认查询本地渠道（火山 / WorkBuddy / Qoder）；多实例时 CPA 结果按 [实例名] 前缀区分。",
-            "  /quota",
+            "  /quotanoa",
             "    无参数：查询全部本地渠道（火山 / WorkBuddy / Qoder）。",
             "    若配置了 cpa.quota_default_channels，则只查列表内渠道。",
-            "  /quota all",
+            "  /quotanoa all",
             "    查询全部渠道：本地渠道 + 全部 CPA 实例（同义 --all / -a）。",
-            "  /quota help",
+            "  /quotanoa help",
             "    查看本帮助（同义 --help / -h）。",
-            "  /quota <平台>",
+            "  /quotanoa <平台>",
             "    claude / codex(gpt, openai) / antigravity(反重力, agy) / kimi / xai / 火山(volcengine, ark) / workbuddy(wb) / qoder(qd)",
-            "  /quota <实例>",
-            "    只查指定 CPA 实例。例：/quota Home",
-            "  /quota <平台> <实例>",
-            "    例：/quota antigravity Home  或  /quota Home antigravity",
-            "  /quota <查询词>",
+            "  /quotanoa <实例>",
+            "    只查指定 CPA 实例。例：/quotanoa Home",
+            "  /quotanoa <平台> <实例>",
+            "    例：/quotanoa antigravity Home  或  /quotanoa Home antigravity",
+            "  /quotanoa <查询词>",
             "    单个账号的额度卡（跨全部实例搜索）。",
-            "  /quota --instance <实例>   显式指定实例，避免与渠道名冲突",
-            "  /quota --fresh     忽略缓存，强制重查上游",
-            "  /quota --text      只发文字总览（排障 / 无浏览器）",
-            "  /quota cooling     只看冷却中的凭证（全部实例）",
-            "  /quota reset <查询词>   清除配额/冷却并恢复路由（跨实例搜索）",
+            "  /quotanoa --instance <实例>   显式指定实例，避免与渠道名冲突",
+            "  /quotanoa --fresh     忽略缓存，强制重查上游",
+            "  /quotanoa --text      只发文字总览（排障 / 无浏览器）",
+            "  /quotanoa cooling     只看冷却中的凭证（全部实例）",
+            "  /quotanoa reset <查询词>   清除配额/冷却并恢复路由（跨实例搜索）",
             "",
             "【别名】分渠道存储（data/quotanoa_aliases.json）。",
-            "  /quota alias list [--disabled]",
-            "  /quota alias set <渠道> <查询词> <别名>",
-            "    例：/quota alias set antigravity user@example.com AG-1",
+            "  /quotanoa alias list [--disabled]",
+            "  /quotanoa alias set <渠道> <查询词> <别名>",
+            "    例：/quotanoa alias set antigravity user@example.com AG-1",
             "    渠道名可用文件里的 channel_keywords 自定义（如 agy → antigravity）。",
-            "  /quota alias del <查询词>    删除（跨渠道全部删除）",
+            "  /quotanoa alias del <查询词>    删除（跨渠道全部删除）",
             "",
             "【火山方舟】本地渠道，凭据存 data/quotanoa_config.json 的 volcengine.accounts。",
             "  支持 Coding Plan 与 Agent Plan，双套餐额度合并为一张卡片展示（含 Coding/Agent 档位徽章与到期时间）。",
-            "  /quota volc list",
-            "  /quota volc add <名称> <AK> <SK> [region]",
-            "  /quota volc remove <名称> --yes",
+            "  /quotanoa volc list",
+            "  /quotanoa volc add <名称> <AK> <SK> [region]",
+            "  /quotanoa volc remove <名称> --yes",
             "",
             "【WorkBuddy】本地渠道，网关存 data/quotanoa_config.json 的 workbuddy.servers。",
-            "  /quota wb              查询全部网关额度（同 workbuddy）",
-            "  /quota wb list",
-            "  /quota wb add <名称> <base_url> --user U --pass P [--timeout N]",
-            "  /quota wb login <名称>  校验账号密码并刷新会话",
-            "  /quota wb remove <名称> --yes",
+            "  /quotanoa wb              查询全部网关额度（同 workbuddy）",
+            "  /quotanoa wb list",
+            "  /quotanoa wb add <名称> <base_url> --user U --pass P [--timeout N]",
+            "  /quotanoa wb login <名称>  校验账号密码并刷新会话",
+            "  /quotanoa wb remove <名称> --yes",
             "",
             "【Qoder】本地渠道，代理存 data/quotanoa_config.json 的 qoder.servers。",
-            "  /quota qoder           查询全部代理号池额度（同 qd）",
-            "  /quota qoder list",
-            "  /quota qoder add <名称> <base_url> --key <API_KEY> [--timeout N]",
-            "  /quota qoder remove <名称> --yes",
+            "  /quotanoa qoder           查询全部代理号池额度（同 qd）",
+            "  /quotanoa qoder list",
+            "  /quotanoa qoder add <名称> <base_url> --key <API_KEY> [--timeout N]",
+            "  /quotanoa qoder remove <名称> --yes",
             "",
             "【主题与排版】修改后立刻生效并持久化。",
-            "  /quota theme           查看当前主题与可选主题",
-            "  /quota theme set <主题>",
-            "  /quota card            查看每行卡片数",
-            "  /quota card row N      设置每行卡片数（1..6）",
+            "  /quotanoa theme           查看当前主题与可选主题",
+            "  /quotanoa theme set <主题>",
+            "  /quotanoa card            查看每行卡片数",
+            "  /quotanoa card row N      设置每行卡片数（1..6）",
             "",
             "【配置】",
-            "  /quota config show     查看生效配置（密钥脱敏）与最近解析错误",
-            "  /quota config reload   强制从磁盘重载配置",
+            "  /quotanoa config show     查看生效配置（密钥脱敏）与最近解析错误",
+            "  /quotanoa config reload   强制从磁盘重载配置",
             "",
             "【管理】CPA 实例 / 凭证 / 登录 / Codex 重置请用 /cpa。",
         ]
@@ -355,7 +355,7 @@ async def volc_list() -> None:
 
     accounts = state.get_snapshot().volcengine.accounts
     if not accounts:
-        await UniMessage("还没有配置火山方舟账号。新增：/quota volc add <名称> <AK> <SK> [region]").finish()
+        await UniMessage("还没有配置火山方舟账号。新增：/quotanoa volc add <名称> <AK> <SK> [region]").finish()
         return
     lines = ["【火山方舟账号】"]
     for account in accounts:
@@ -381,7 +381,7 @@ async def volc_add(
         return
     accounts = _volcengine_raw()
     if any(normalize_name(str(item.get("name") or "")) == account_name for item in accounts):
-        await UniMessage(f"火山账号「{account_name}」已存在。查看：/quota volc list").finish()
+        await UniMessage(f"火山账号「{account_name}」已存在。查看：/quotanoa volc list").finish()
         return
     entry: dict[str, Any] = {
         "name": account_name,
@@ -396,7 +396,7 @@ async def volc_add(
     except ConfigError as exc:
         await UniMessage(f"写入配置失败：{exc}").finish()
         return
-    await UniMessage(f"已新增火山账号「{account_name}」。查看：/quota volc list").finish()
+    await UniMessage(f"已新增火山账号「{account_name}」。查看：/quotanoa volc list").finish()
 
 
 @quota.assign("volc.remove")
@@ -408,10 +408,10 @@ async def volc_remove(
     accounts = _volcengine_raw()
     remaining = [item for item in accounts if normalize_name(str(item.get("name") or "")) != account_name]
     if len(remaining) == len(accounts):
-        await UniMessage(f"没有名为「{account_name}」的火山账号。查看：/quota volc list").finish()
+        await UniMessage(f"没有名为「{account_name}」的火山账号。查看：/quotanoa volc list").finish()
         return
     if not arp.find("volc.remove.yes"):
-        await UniMessage(f"即将删除火山账号「{account_name}」。确认请发送：\n/quota volc remove {account_name} --yes").finish()
+        await UniMessage(            f"即将删除火山账号「{account_name}」。确认请发送：\n/quotanoa volc remove {account_name} --yes").finish()
         return
     try:
         _write_volcengine(remaining)
@@ -481,7 +481,7 @@ async def _send_volcengine_results(cpa: CpaConfig, selection: QuotaSelection) ->
             return
     if not accounts:
         await UniMessage(
-            "未配置火山方舟账号。用 /quota volc add <名称> <AK> <SK> [region] 添加，"
+            "未配置火山方舟账号。用 /quotanoa volc add <名称> <AK> <SK> [region] 添加，"
             "或编辑 data/quotanoa_config.json 的 volcengine.accounts。"
         ).finish()
         return
@@ -518,7 +518,7 @@ async def _send_workbuddy_results(cpa: CpaConfig, selection: QuotaSelection) -> 
     servers = list(state.get_snapshot().workbuddy.servers)
     if not servers:
         await UniMessage(
-            "未配置 WorkBuddy 网关。用 /quota wb add <名称> <base_url> --user U --pass P 添加，"
+            "未配置 WorkBuddy 网关。用 /quotanoa wb add <名称> <base_url> --user U --pass P 添加，"
             "或编辑 data/quotanoa_config.json 的 workbuddy.servers。"
         ).finish()
         return
@@ -535,7 +535,7 @@ async def _send_qoder_results(cpa: CpaConfig, selection: QuotaSelection) -> None
     servers = list(state.get_snapshot().qoder.servers)
     if not servers:
         await UniMessage(
-            "未配置 Qoder 代理。新增：/quota qoder add <名称> <base_url> --key <API_KEY>"
+            "未配置 Qoder 代理。新增：/quotanoa qoder add <名称> <base_url> --key <API_KEY>"
         ).finish()
         return
     await UniMessage("正在查询 Qoder 额度…").send()
@@ -570,9 +570,9 @@ async def _local_channel_board(snapshot, channel: str, *, force: bool) -> QuotaB
 def _no_channel_configured_text() -> str:
     return (
         "没有可查询的渠道。\n"
-        "本地渠道：/quota volc add <名称> <AK> <SK>、/quota wb add …、/quota qoder add …\n"
+        "本地渠道：/quotanoa volc add <名称> <AK> <SK>、/quotanoa wb add …、/quotanoa qoder add …\n"
         "CPA 实例：/cpa instance add <名称> <base_url>\n"
-        "查看全部渠道：/quota all"
+        "查看全部渠道：/quotanoa all"
     )
 
 
@@ -625,7 +625,7 @@ def _custom_channel_keywords() -> dict[str, str]:
 
 
 # --------------------------------------------------------------------------- #
-# /quota wb 子命令（查询 + 网关管理）
+# /quotanoa wb 子命令（查询 + 网关管理）
 # --------------------------------------------------------------------------- #
 
 
@@ -634,11 +634,11 @@ def _custom_channel_keywords() -> dict[str, str]:
     additional=_without("workbuddy.list", "workbuddy.add", "workbuddy.remove", "workbuddy.login"),
 )
 async def quota_workbuddy(event: Event) -> None:
-    """`/quota wb`：查询 WorkBuddy 全部网关额度（渠道查询，不查单个账号）。
+    """`/quotanoa wb`：查询 WorkBuddy 全部网关额度（渠道查询，不查单个账号）。
 
     子命令只在无 `list`/`add`/`remove` 时触发；`--text` / `--fresh` 由
     ``parse_quota_command`` 从 plaintext 统一解析（不在子命令上声明 Option，
-    否则会劫持根级 ``/quota --text``）。
+    否则会劫持根级 ``/quotanoa --text``）。
     """
     selection = parse_quota_command(
         event.get_plaintext(),
@@ -653,7 +653,7 @@ async def quota_workbuddy(event: Event) -> None:
     additional=_without("qoder.list", "qoder.add", "qoder.remove"),
 )
 async def quota_qoder(event: Event) -> None:
-    """`/quota qoder`：查询 Qoder 全部代理号池额度（渠道查询，不查单个账号）。"""
+    """`/quotanoa qoder`：查询 Qoder 全部代理号池额度（渠道查询，不查单个账号）。"""
     selection = parse_quota_command(
         event.get_plaintext(),
         known_instances=set(state.get_snapshot().cpa.names()),

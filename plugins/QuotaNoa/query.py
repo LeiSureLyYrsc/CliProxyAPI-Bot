@@ -1,4 +1,4 @@
-"""``/quota`` 查询参数解析。
+"""``/quotanoa`` 查询参数解析。
 
 位置参数三选消歧（顺序无关）：
 1. 渠道关键字（claude / codex / 火山 …）→ 平台；
@@ -57,7 +57,7 @@ def tokenize(text: str) -> list[str]:
 
 def strip_quota_head(parts: list[str]) -> list[str]:
     leftover = list(parts)
-    if leftover and leftover[0].lstrip("/").lower() in {"cpa", "quota"}:
+    if leftover and leftover[0].lstrip("/").lower() in {"cpa", "quota", "quotanoa"}:
         leftover = leftover[1:]
     if leftover and leftover[0].lower() == "quota":
         leftover = leftover[1:]
@@ -147,8 +147,8 @@ def parse_quota_parts(
         return QuotaSelection(
             error=(
                 f"「{shown}」同时是渠道名称和实例名称。"
-                f"\n查询该渠道全部实例：/quota {ambiguous[0]}"
-                f"\n只查某个实例：/quota --instance {ambiguous[0]}"
+                f"\n查询该渠道全部实例：/quotanoa {ambiguous[0]}"
+                f"\n只查某个实例：/quotanoa --instance {ambiguous[0]}"
                 f"\n（提示：实例名不应与渠道名相同，建议重命名实例）"
             )
         )

@@ -1286,7 +1286,7 @@ def _format_platform(section: PlatformQuota, account_limit: int) -> list[str]:
         lines.append(f"  {shown}{plan}{flag}  {windows}{shown_subs}")
     extra = len(section.accounts) - len(visible)
     if extra > 0:
-        lines.append(f"  ... 另有 {extra} 个账号，用 /quota {section.platform} 查看")
+        lines.append(f"  ... 另有 {extra} 个账号，用 /quotanoa {section.platform} 查看")
     return lines
 
 

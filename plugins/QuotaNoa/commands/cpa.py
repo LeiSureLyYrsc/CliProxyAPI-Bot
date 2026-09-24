@@ -81,7 +81,7 @@ cpa = on_alconna(
         Subcommand(
             "quota",
             Args["a?", str]["b?", str]["tail", MultiVar(str, "*")],
-            help_text="查询额度（同 /quota）：/cpa quota [平台] [实例] [--fresh|--text]",
+            help_text="查询额度（同 /quotanoa）：/cpa quota [平台] [实例] [--fresh|--text]",
         ),
         Subcommand(
             "auth",
@@ -145,7 +145,7 @@ async def _capture_oauth_callback(bot: Bot, event: Event) -> None:
         text = event.get_plaintext().strip()
     except Exception:
         return
-    if not text or text.lower().startswith(("cpa ", "/cpa ", "quota ", "/quota ")):
+    if not text or text.lower().startswith(("cpa ", "/cpa ", "quotanoa ", "/quotanoa ")):
         return
     if not looks_like_oauth_callback(text):
         return

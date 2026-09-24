@@ -102,7 +102,7 @@ def _warn_legacy(path: Path) -> None:
         + ("环境变量 CPA_* " if legacy_env else "")
         + ("文件 " + ", ".join(legacy_files) if legacy_files else "")
         + "。这些不再生效；别名文件已更名为 data/quotanoa_aliases.json（未做自动迁移）。"
-        "请改用 %s（/quota config show 查看，/quota config reload 重载）。",
+        "请改用 %s（/quotanoa config show 查看，/quotanoa config reload 重载）。",
         path,
     )
 
@@ -251,7 +251,7 @@ def reload_config() -> ConfigSnapshot:
 
 
 def update_config(patch: Mapping[str, Any]) -> ConfigSnapshot:
-    """把 patch 深合并进配置文件并重载（用于 /quota config 与主题设置）。
+    """把 patch 深合并进配置文件并重载（用于 /quotanoa config 与主题设置）。
 
     磁盘模式下以**磁盘上的当前内容**为合并底，避免覆盖操作者刚手改的字段；
     内存模式只合并内存快照，绝不读写磁盘。

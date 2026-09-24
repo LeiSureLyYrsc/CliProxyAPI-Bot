@@ -1,6 +1,6 @@
-"""/quota qoder：Qoder2OAPI 代理管理（data/quotanoa_config.json 的 qoder.servers）。
+"""/quotanoa qoder：Qoder2OAPI 代理管理（data/quotanoa_config.json 的 qoder.servers）。
 
-查询用 /quota qoder（见 commands/quota.py）；本模块只负责代理的增删查，
+查询用 /quotanoa qoder（见 commands/quota.py）；本模块只负责代理的增删查，
 写入配置后自动热重载。
 
 鉴权：Qoder 代理统一使用 API Key（``--key``，来自代理的 data/api_key.txt），
@@ -41,7 +41,7 @@ async def qoder_list() -> None:
     if not servers:
         await UniMessage(
             "还没有配置 Qoder 代理。"
-            "新增：/quota qoder add <名称> <base_url> --key <API_KEY>"
+            "新增：/quotanoa qoder add <名称> <base_url> --key <API_KEY>"
         ).finish()
         return
     lines = ["【Qoder 代理】"]
@@ -81,7 +81,7 @@ async def qoder_add(
         return
     servers = _qoder_raw()
     if any(normalize_name(str(item.get("name") or "")) == raw_name for item in servers):
-        await UniMessage(f"代理「{raw_name}」已存在。查看：/quota qoder list").finish()
+        await UniMessage(f"代理「{raw_name}」已存在。查看：/quotanoa qoder list").finish()
         return
     entry: dict[str, Any] = {"name": raw_name, "base_url": url, "api_key": api_key}
     if timeout.available and _text(timeout):
@@ -92,7 +92,7 @@ async def qoder_add(
     except ConfigError as exc:
         await UniMessage(f"写入配置失败：{exc}").finish()
         return
-    await UniMessage(f"已新增 Qoder 代理「{raw_name}」→ {url}。查看：/quota qoder list").finish()
+    await UniMessage(f"已新增 Qoder 代理「{raw_name}」→ {url}。查看：/quotanoa qoder list").finish()
 
 
 @quota.assign("qoder.remove")
@@ -104,11 +104,11 @@ async def qoder_remove(
     servers = _qoder_raw()
     remaining = [item for item in servers if normalize_name(str(item.get("name") or "")) != raw_name]
     if len(remaining) == len(servers):
-        await UniMessage(f"没有名为「{raw_name}」的 Qoder 代理。查看：/quota qoder list").finish()
+        await UniMessage(f"没有名为「{raw_name}」的 Qoder 代理。查看：/quotanoa qoder list").finish()
         return
     if not arp.find("qoder.remove.yes"):
         await UniMessage(
-            f"即将删除 Qoder 代理「{raw_name}」。确认请发送：\n/quota qoder remove {raw_name} --yes"
+            f"即将删除 Qoder 代理「{raw_name}」。确认请发送：\n/quotanoa qoder remove {raw_name} --yes"
         ).finish()
         return
     try:

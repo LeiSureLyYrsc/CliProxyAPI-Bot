@@ -1,6 +1,6 @@
-"""/quota wb：WorkBuddy 网关管理（data/quotanoa_config.json 的 workbuddy.servers）。
+"""/quotanoa wb：WorkBuddy 网关管理（data/quotanoa_config.json 的 workbuddy.servers）。
 
-查询用 ``/quota wb`` / ``/quota workbuddy``（见 commands/quota.py）；本模块只负责
+查询用 ``/quotanoa wb`` / ``/quotanoa workbuddy``（见 commands/quota.py）；本模块只负责
 网关的增删查，写入配置后自动热重载。
 
 鉴权：网关用**控制台账号 + 密码**登录（``--user`` / ``--pass``），插件自动换取
@@ -42,7 +42,7 @@ async def wb_list() -> None:
     if not servers:
         await UniMessage(
             "还没有配置 WorkBuddy 网关。"
-            "新增：/quota wb add <名称> <base_url> --user <账号> --pass <密码>"
+            "新增：/quotanoa wb add <名称> <base_url> --user <账号> --pass <密码>"
         ).finish()
         return
     lines = ["【WorkBuddy 网关】"]
@@ -89,7 +89,7 @@ async def wb_add(
         return
     servers = _workbuddy_raw()
     if any(normalize_name(str(item.get("name") or "")) == raw_name for item in servers):
-        await UniMessage(f"网关「{raw_name}」已存在。查看：/quota wb list").finish()
+        await UniMessage(f"网关「{raw_name}」已存在。查看：/quotanoa wb list").finish()
         return
     entry: dict[str, Any] = {"name": raw_name, "base_url": url}
     if account:
@@ -107,7 +107,7 @@ async def wb_add(
         await UniMessage(f"写入配置失败：{exc}").finish()
         return
     reset_sessions(raw_name)
-    await UniMessage(f"已新增 WorkBuddy 网关「{raw_name}」→ {url}。查看：/quota wb list").finish()
+    await UniMessage(f"已新增 WorkBuddy 网关「{raw_name}」→ {url}。查看：/quotanoa wb list").finish()
 
 
 @quota.assign("workbuddy.remove")
@@ -119,11 +119,11 @@ async def wb_remove(
     servers = _workbuddy_raw()
     remaining = [item for item in servers if normalize_name(str(item.get("name") or "")) != raw_name]
     if len(remaining) == len(servers):
-        await UniMessage(f"没有名为「{raw_name}」的 WorkBuddy 网关。查看：/quota wb list").finish()
+        await UniMessage(f"没有名为「{raw_name}」的 WorkBuddy 网关。查看：/quotanoa wb list").finish()
         return
     if not arp.find("workbuddy.remove.yes"):
         await UniMessage(
-            f"即将删除 WorkBuddy 网关「{raw_name}」。确认请发送：\n/quota wb remove {raw_name} --yes"
+            f"即将删除 WorkBuddy 网关「{raw_name}」。确认请发送：\n/quotanoa wb remove {raw_name} --yes"
         ).finish()
         return
     try:
@@ -144,7 +144,7 @@ async def wb_login(
     server = state.get_snapshot().workbuddy.servers
     target = next((item for item in server if item.name == raw_name), None)
     if target is None:
-        await UniMessage(f"没有名为「{raw_name}」的 WorkBuddy 网关。查看：/quota wb list").finish()
+        await UniMessage(f"没有名为「{raw_name}」的 WorkBuddy 网关。查看：/quotanoa wb list").finish()
         return
     from ..wb.client import login
 

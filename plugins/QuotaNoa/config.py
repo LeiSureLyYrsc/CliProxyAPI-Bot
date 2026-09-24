@@ -413,7 +413,7 @@ def _parse_cpa_instance(entry: Any) -> CpaInstance | None:
 
 
 def _parse_default_channels(value: Any) -> tuple[str, ...]:
-    """解析 /quota 默认渠道：只保留本地渠道（CPA 渠道靠显式参数或 all）。"""
+    """解析 /quotanoa 默认渠道：只保留本地渠道（CPA 渠道靠显式参数或 all）。"""
     cleaned: list[str] = []
     seen: set[str] = set()
     for item in _as_str_list(value):

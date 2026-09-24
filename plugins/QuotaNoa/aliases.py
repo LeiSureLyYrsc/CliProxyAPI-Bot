@@ -15,8 +15,8 @@
 
 - ``*`` 为全局桶，任何渠道在自身桶未命中时会回退到全局桶。
 - ``channel_keywords`` 为**保留键**：自定义渠道查询关键字 → canonical 渠道名，
-  仅影响 ``/quota``、``/cpa quota`` 的位置参数解析（不影响出图 / 文本渲染）。
-  例如写入 ``{"agy": "antigravity"}`` 后 ``/quota agy`` 等同 ``/quota antigravity``。
+  仅影响 ``/quotanoa``、``/cpa quota`` 的位置参数解析（不影响出图 / 文本渲染）。
+  例如写入 ``{"agy": "antigravity"}`` 后 ``/quotanoa agy`` 等同 ``/quotanoa antigravity``。
   内置关键字优先，本表只补足 / 覆盖未内置的组合。
 - 以 ``_`` 开头的键（如 ``_readme``）为**注释/元数据**，读取时忽略。
 - 旧版扁平格式（``{"身份键": "别名"}``）读取时自动归一化进 ``*`` 桶。
@@ -57,8 +57,8 @@ def default_aliases_dict() -> dict[str, Any]:
             "账号别名：渠道 → 身份键 → 显示名。",
             "身份键可用 auth_index、凭证文件名（可省 .json）、邮箱，或其前缀。",
             f"“{GLOBAL_BUCKET}” 为全局桶：任何渠道自身桶未命中时回退到这里。",
-            f"{CHANNEL_KEYWORDS_KEY}：自定义渠道查询关键字（只影响 /quota 解析，不改出图/文本）。",
-            "保存后自动热重载：下一条 /quota 即生效，无需重启。",
+            f"{CHANNEL_KEYWORDS_KEY}：自定义渠道查询关键字（只影响 /quotanoa 解析，不改出图/文本）。",
+            "保存后自动热重载：下一条 /quotanoa 即生效，无需重启。",
         ],
         CHANNEL_KEYWORDS_KEY: {"agy": "antigravity"},
     }
@@ -414,7 +414,7 @@ def list_aliases() -> dict[str, dict[str, str]]:
 
 
 def _hint() -> str:
-    return "还没有账号别名。设置：/quota alias set <渠道> <查询词> <别名>"
+    return "还没有账号别名。设置：/quotanoa alias set <渠道> <查询词> <别名>"
 
 
 def format_alias_list(
@@ -446,7 +446,7 @@ def format_alias_list(
             lines.append(f"[{label}] {alias}  ←  {shown}")
     if not lines:
         if hidden:
-            return "没有可显示的别名（已隐藏 disabled 账号）。查看：/quota alias list --disabled"
+            return "没有可显示的别名（已隐藏 disabled 账号）。查看：/quotanoa alias list --disabled"
         return _hint()
     return "\n".join(lines)
 

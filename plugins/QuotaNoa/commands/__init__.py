@@ -1,4 +1,4 @@
-"""命令层包：/quota 根（额度 + 别名/主题/卡片/配置）与 /cpa 管理根。
+"""命令层包：/quotanoa 根（额度 + 别名/主题/卡片/配置）与 /cpa 管理根。
 
 import 本包即完成全部事件响应器注册。
 """
@@ -10,12 +10,12 @@ from nonebot.message import event_preprocessor
 
 from .. import state
 
-from . import quota as quota  # noqa: E402, F401  (注册 /quota 根 + 查询 + cooling/reset)
-from . import alias as alias  # noqa: E402, F401  (注册 /quota alias)
-from . import theme as theme  # noqa: E402, F401  (注册 /quota theme / card)
-from . import config as config  # noqa: E402, F401  (注册 /quota config)
-from . import wb as wb  # noqa: E402, F401  (注册 /quota wb 网关管理)
-from . import qoder as qoder  # noqa: E402, F401  (注册 /quota qoder 代理管理)
+from . import quota as quota  # noqa: E402, F401  (注册 /quotanoa 根 + 查询 + cooling/reset)
+from . import alias as alias  # noqa: E402, F401  (注册 /quotanoa alias)
+from . import theme as theme  # noqa: E402, F401  (注册 /quotanoa theme / card)
+from . import config as config  # noqa: E402, F401  (注册 /quotanoa config)
+from . import wb as wb  # noqa: E402, F401  (注册 /quotanoa wb 网关管理)
+from . import qoder as qoder  # noqa: E402, F401  (注册 /quotanoa qoder 代理管理)
 from . import cpa as cpa  # noqa: E402, F401  (注册 /cpa 管理根)
 
 

@@ -1,11 +1,11 @@
 """命令层公共工具：权限、文本解析、凭证查找。
 
-被 `quota.py`（/quota 根）与 `cpa.py`（/cpa 管理根）共享。
+被 `quota.py`（/quotanoa 根）与 `cpa.py`（/cpa 管理根）共享。
 
 凭证操作分两种调用形态：
 
 - **实例内**：``/cpa auth … <实例> <查询词>``，用 ``_require_one(instance, query)``；
-- **跨实例**：``/quota alias …`` / ``/quota reset`` 不指定实例，用
+- **跨实例**：``/quotanoa alias …`` / ``/quotanoa reset`` 不指定实例，用
   ``_require_one_across(query)`` 在全部实例中搜索，返回 ``(实例名, 凭证)``。
 """
 
@@ -114,7 +114,7 @@ async def _require_platform_account(instance: str, provider: str, query: str) ->
     platform = normalize_channel(provider)
     if not platform:
         await UniMessage(
-            f"未知渠道「{provider}」。用法：/quota alias set <渠道> <邮箱> <别名>\n"
+            f"未知渠道「{provider}」。用法：/quotanoa alias set <渠道> <邮箱> <别名>\n"
             f"渠道如：{KNOWN_CHANNELS}"
         ).finish()
         raise CPAError(f"未知渠道：{provider}")
@@ -296,7 +296,7 @@ async def _require_platform_account_across(provider: str, query: str) -> tuple[s
     platform = normalize_channel(provider)
     if not platform:
         await UniMessage(
-            f"未知渠道「{provider}」。用法：/quota alias set <渠道> <邮箱> <别名>\n"
+            f"未知渠道「{provider}」。用法：/quotanoa alias set <渠道> <邮箱> <别名>\n"
             f"渠道如：{KNOWN_CHANNELS}"
         ).finish()
         raise CPAError(f"未知渠道：{provider}")

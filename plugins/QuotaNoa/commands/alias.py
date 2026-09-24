@@ -1,4 +1,4 @@
-"""/quota alias：分渠道账号别名管理（data/quotanoa_aliases.json）。
+"""/quotanoa alias：分渠道账号别名管理（data/quotanoa_aliases.json）。
 
 别名按渠道存储、跨实例生效：查询词会在全部 CPA 实例与 WorkBuddy 网关账号中搜索，
 命中唯一凭证后绑定。渠道名可用文件里的 ``channel_keywords`` 自定义。
@@ -22,7 +22,7 @@ from .common import (
 )
 from .quota import quota
 
-ALIAS_SET_USAGE = "/quota alias set <渠道> <查询词> <别名>"
+ALIAS_SET_USAGE = "/quotanoa alias set <渠道> <查询词> <别名>"
 
 
 @quota.assign("alias.list")
@@ -59,7 +59,7 @@ async def quota_alias_set(
     clear_quota_cache()
     await UniMessage(
         f"已设置别名「{name}」（渠道 {channel}）。\n"
-        f"聊天/额度图将显示该名称，不再使用邮箱。查看：/quota alias list"
+        f"聊天/额度图将显示该名称，不再使用邮箱。查看：/quotanoa alias list"
     ).finish()
 
 

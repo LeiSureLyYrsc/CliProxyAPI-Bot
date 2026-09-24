@@ -1,4 +1,4 @@
-"""/quota config：查看当前生效配置与强制重载。"""
+"""/quotanoa config：查看当前生效配置与强制重载。"""
 
 from __future__ import annotations
 

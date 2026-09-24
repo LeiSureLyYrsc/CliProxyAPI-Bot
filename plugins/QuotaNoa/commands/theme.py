@@ -1,4 +1,4 @@
-"""/quota theme / /quota card：额度图主题与卡片排版。"""
+"""/quotanoa theme / /quotanoa card：额度图主题与卡片排版。"""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ async def quota_theme_get() -> None:
     await UniMessage(
         f"当前额度图主题：{settings.theme}\n"
         f"可选主题：{allowed}{alias_text}\n"
-        f"修改主题：/quota theme set <主题>"
+        f"修改主题：/quotanoa theme set <主题>"
     ).finish()
 
 
@@ -56,4 +56,4 @@ async def quota_card_row(count: Query[str] = Query("card.row.count")) -> None:
 @quota.assign("card", additional=_without("card.row"))
 async def quota_card_get() -> None:
     settings = get_render_settings()
-    await UniMessage(f"当前每行卡片数：{settings.cards_per_row} (1..6)\n修改排版：/quota card row <数量>").finish()
+    await UniMessage(f"当前每行卡片数：{settings.cards_per_row} (1..6)\n修改排版：/quotanoa card row <数量>").finish()
