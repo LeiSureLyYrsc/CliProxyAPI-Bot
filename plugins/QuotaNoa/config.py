@@ -13,9 +13,12 @@ CPA 支持多个实例：``cpa.instances[]`` 中每一项都是一个独立连�
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
+import shutil
+import time
 import unicodedata
 import uuid
 from dataclasses import dataclass, field
@@ -33,6 +36,10 @@ from .model import (
 
 DEFAULT_CONFIG_FILE = "data/quotanoa_config.json"
 DEFAULT_ALIASES_FILE = "data/quotanoa_aliases.json"
+
+#: ``/quotanoa config fix`` 修补前备份旧配置的目录（相对当前工作目录）。
+#: 备份文件名形如 ``quotanoa_config_<日期>-<时间>_bak.json``。
+DEFAULT_BACKUP_DIR = "data/backup"
 
 DEFAULT_THEME = "default"
 DEFAULT_CARDS_PER_ROW = 3
@@ -287,6 +294,17 @@ class RefreshCacheConfig:
 
 
 @dataclass(frozen=True)
+class OnebotV11FeatureConfig:
+    """OneBot V11 适配器专属特性开关。
+
+    ``forward_message``：``True`` 时在 OneBot V11 环境下把额度查询的多条结果
+    合并为一条转发消息（合并转发）；非 OneBot V11 适配器自动忽略。
+    """
+
+    forward_message: bool = False
+
+
+@dataclass(frozen=True)
 class ConfigSnapshot:
     """一次性完整配置快照。整体替换，不在原地修改。"""
 
@@ -296,6 +314,10 @@ class ConfigSnapshot:
     qoder: QoderConfig = field(default_factory=QoderConfig)
     render: RenderConfig = field(default_factory=RenderConfig)
     refreshcache: RefreshCacheConfig = field(default_factory=RefreshCacheConfig)
+    onebot_v11_feature: OnebotV11FeatureConfig = field(default_factory=OnebotV11FeatureConfig)
+    #: 渠道置顶顺序（通用，对所有适配器生效）：命中的渠道按此顺序排在最前，
+    #: 未命中当前查询的渠道自动忽略；值已归一到 canonical 渠道名。
+    pin_channel: tuple[str, ...] = ()
     #: ``/quotanoa`` 无参默认查询的额外渠道（在本地渠道之外追加）。
     quotanoa_additional_channel: tuple[str, ...] = ()
     #: ``/cpa quota`` 无参默认查询的额外渠道（在全部 CPA 平台之外追加）。
@@ -384,6 +406,10 @@ class ConfigSnapshot:
                 "theme": self.render.theme,
                 "cards_per_row": self.render.cards_per_row,
             },
+            "onebot-v11-feature": {
+                "forward-message": self.onebot_v11_feature.forward_message,
+            },
+            "pin-channel": list(self.pin_channel),
             "quotanoa_additional_channel": list(self.quotanoa_additional_channel),
             "cpa_additional_channel": list(self.cpa_additional_channel),
         }
@@ -577,6 +603,41 @@ def _parse_refreshcache(raw: Any) -> RefreshCacheConfig:
     return RefreshCacheConfig(default=default, channels=channels)
 
 
+def _parse_onebot_v11_feature(raw: Any) -> OnebotV11FeatureConfig:
+    """解析 ``onebot-v11-feature`` 段。
+
+    容忍三种写法：对象 ``{"forward-message": true}``、裸布尔 ``true``（等价于开启
+    合并转发）、以及缺失（默认关闭）。``forward_message`` 也接受 ``forward_message``
+    下划线写法与宽松真值。
+    """
+    if raw is None:
+        return OnebotV11FeatureConfig()
+    if not isinstance(raw, Mapping):
+        # 裸值（true/false/"on" 等）：直接作为 forward-message 开关。
+        return OnebotV11FeatureConfig(forward_message=_as_bool(raw, False))
+    value = raw.get("forward-message")
+    if value is None:
+        value = raw.get("forward_message")
+    return OnebotV11FeatureConfig(forward_message=_as_bool(value, False))
+
+
+def _parse_pin_channel(value: Any) -> tuple[str, ...]:
+    """解析 ``pin-channel``：归一到 canonical 渠道名，按原顺序去重，丢弃未知项。
+
+    这是通用顺序配置（非 ``all`` 语义），故不含 ``quotanoa_additional_channel``
+    里对 ``all`` 的特判。
+    """
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for item in _as_str_list(value):
+        canonical = normalize_channel(item)
+        if not canonical or canonical in seen:
+            continue
+        seen.add(canonical)
+        cleaned.append(canonical)
+    return tuple(cleaned)
+
+
 def snapshot_from_raw(raw: Mapping[str, Any]) -> ConfigSnapshot:
     """把原始 JSON 字典转换为强类型快照。"""
     if not isinstance(raw, Mapping):
@@ -589,6 +650,8 @@ def snapshot_from_raw(raw: Mapping[str, Any]) -> ConfigSnapshot:
         qoder=_parse_qoder(raw.get("qoder")),
         render=_parse_render(raw.get("render")),
         refreshcache=_parse_refreshcache(raw.get("refreshcache")),
+        onebot_v11_feature=_parse_onebot_v11_feature(raw.get("onebot-v11-feature")),
+        pin_channel=_parse_pin_channel(raw.get("pin-channel")),
         quotanoa_additional_channel=_parse_additional_channels(
             raw.get("quotanoa_additional_channel")
         ),
@@ -655,3 +718,135 @@ def deep_merge(base: Mapping[str, Any], patch: Mapping[str, Any]) -> dict[str, A
         else:
             merged[key] = value
     return merged
+
+
+# --------------------------------------------------------------------------- #
+# 配置修补（/quotanoa config fix：补齐缺失项并备份旧文件）
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class RepairResult:
+    """``/quotanoa config fix`` 的结果。
+
+    - ``changed``：是否补齐了缺失项（False 表示配置已完整，未写盘）。
+    - ``added_keys``：补入的键路径（点号分隔，如 ``onebot-v11-feature.forward-message``）。
+    - ``backup_path``：修补前的备份文件路径；未写盘时为 None。
+    - ``path``：被修补的配置文件路径；内存模式为 None。
+    """
+
+    changed: bool
+    added_keys: tuple[str, ...] = ()
+    backup_path: Path | None = None
+    path: Path | None = None
+
+
+def default_backup_dir() -> Path:
+    """备份目录的绝对路径（常量相对当前工作目录解析）。"""
+    return Path(DEFAULT_BACKUP_DIR).expanduser().resolve()
+
+
+def _missing_defaults(raw: Mapping[str, Any], defaults: Mapping[str, Any]) -> dict[str, Any]:
+    """递归收集 ``raw`` 相对 ``defaults`` 缺失的键（返回嵌套结构）。
+
+    只在 ``raw`` 缺少键时补入默认值；已存在的键（无论类型对错）一律保留，
+    不做覆盖或纠正。
+    """
+    missing: dict[str, Any] = {}
+    for key, default_value in defaults.items():
+        if key not in raw:
+            missing[key] = copy.deepcopy(default_value)
+            continue
+        current = raw[key]
+        if isinstance(current, Mapping) and isinstance(default_value, Mapping):
+            nested = _missing_defaults(current, default_value)
+            if nested:
+                missing[key] = nested
+    return missing
+
+
+def _merge_missing(base: Mapping[str, Any], missing: Mapping[str, Any]) -> dict[str, Any]:
+    """把 ``missing`` 深层并入 ``base``（返回新 dict，不修改入参）。"""
+    merged: dict[str, Any] = dict(base)
+    for key, value in missing.items():
+        current = merged.get(key)
+        if isinstance(current, Mapping) and isinstance(value, Mapping):
+            merged[key] = _merge_missing(current, value)
+        else:
+            merged[key] = copy.deepcopy(value)
+    return merged
+
+
+def flatten_missing_keys(missing: Mapping[str, Any], prefix: str = "") -> tuple[str, ...]:
+    """把嵌套的缺失结构拍平成点号键路径列表（有序）。"""
+    keys: list[str] = []
+    for key, value in missing.items():
+        path = f"{prefix}.{key}" if prefix else str(key)
+        if isinstance(value, Mapping):
+            keys.extend(flatten_missing_keys(value, path))
+        else:
+            keys.append(path)
+    return tuple(keys)
+
+
+def config_missing_defaults(raw: Mapping[str, Any]) -> dict[str, Any]:
+    """返回 ``raw`` 相对默认配置缺失的键（嵌套结构；空 dict 表示已完整）。"""
+    return _missing_defaults(_as_mapping(raw), default_config_dict())
+
+
+def repair_config_data(raw: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """补齐 ``raw`` 缺失的默认键，返回 ``(修补后数据, 缺失结构)``。
+
+    缺失结构为空时原样返回 ``raw`` 的浅拷贝。不修改入参。
+    """
+    missing = config_missing_defaults(raw)
+    if not missing:
+        return dict(raw), {}
+    return _merge_missing(raw, missing), missing
+
+
+def backup_config_file(path: Path, *, backup_dir: Path) -> Path:
+    """把现有配置文件复制到 ``backup_dir``，文件名 ``<名>_<日期>-<时间>_bak.json``。
+
+    同一秒内多次备份自动追加序号避免覆盖。失败抛 ``ConfigError``。
+    """
+    if not path.is_file():
+        raise ConfigError(f"配置文件不存在，无法备份：{path}")
+    try:
+        backup_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise ConfigError(f"无法创建备份目录：{backup_dir}（{exc}）") from exc
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    target = backup_dir / f"{path.stem}_{stamp}_bak.json"
+    counter = 1
+    while target.exists():
+        target = backup_dir / f"{path.stem}_{stamp}_{counter}_bak.json"
+        counter += 1
+    try:
+        shutil.copy2(path, target)
+    except OSError as exc:
+        raise ConfigError(f"备份配置失败：{exc}") from exc
+    return target
+
+
+def repair_config_file(path: Path, *, backup_dir: Path | None = None) -> RepairResult:
+    """补齐 ``path`` 缺失的配置项：先备份旧文件，再原子写入补全后的内容。
+
+    配置已完整时不做任何写盘，返回 ``changed=False``。修补后若仍无法解析
+    （原有错误，如实例重名）则抛 ``ConfigError``，**不写入**，避免破坏现场。
+    """
+    raw = read_config_file(path)
+    merged, missing = repair_config_data(raw)
+    if not missing:
+        return RepairResult(changed=False, path=path)
+    # 补全后先校验；原有语义错误会在此抛出，避免写入半成品。
+    snapshot_from_raw(merged)
+    target_dir = backup_dir if backup_dir is not None else default_backup_dir()
+    backup = backup_config_file(path, backup_dir=target_dir)
+    atomic_write_json(path, merged)
+    return RepairResult(
+        changed=True,
+        added_keys=flatten_missing_keys(missing),
+        backup_path=backup,
+        path=path,
+    )

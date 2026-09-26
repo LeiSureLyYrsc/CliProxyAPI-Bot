@@ -1,10 +1,11 @@
-"""/quotanoa config：查看当前生效配置与强制重载。"""
+"""/quotanoa config：查看当前生效配置、强制重载与修补缺失项。"""
 
 from __future__ import annotations
 
 from nonebot_plugin_alconna import UniMessage
 
 from .. import state
+from ..config import ConfigError
 from ..cpa.format import mask_secret
 
 from .quota import quota
@@ -34,10 +35,15 @@ async def quota_config_show() -> None:
     lines.extend(
         [
             "",
-            "volcengine：",
-            f"  账号：{', '.join(a.name for a in snapshot.volcengine.accounts) or '（未配置）'}",
+            "render：",
+            f"  theme：{snapshot.render.theme}  cards_per_row：{snapshot.render.cards_per_row}",
             "",
-            "workbuddy：",
+            "onebot-v11-feature：",
+            f"  forward-message：{snapshot.onebot_v11_feature.forward_message}",
+            "",
+            f"pin-channel：{', '.join(snapshot.pin_channel) or '（未设置）'}",
+            "",
+            f"aliases_file：{snapshot.aliases_file}",
         ]
     )
     if snapshot.workbuddy.servers:
@@ -100,3 +106,33 @@ async def quota_config_reload() -> None:
         await UniMessage(f"配置重载失败：{exc}").finish()
         return
     await UniMessage(f"配置已重新加载（generation={state.generation()}）。").finish()
+
+
+@quota.assign("config.fix")
+async def quota_config_fix() -> None:
+    """补齐配置文件缺失项：先备份旧文件，再写回补全后的内容。"""
+    try:
+        result = state.repair_config()
+    except ConfigError as exc:
+        await UniMessage(f"配置文件修补失败：{exc}").finish()
+        return
+    except Exception as exc:  # noqa: BLE001
+        await UniMessage(f"配置文件修补失败：{exc}").finish()
+        return
+    if not result.changed:
+        location = result.path or state.snapshot_path() or "（内存模式）"
+        lines = [f"配置已完整，无需修补。\n配置文件：{location}"]
+        error = state.last_error()
+        if error:
+            lines.append(f"⚠ 注意：当前配置仍存在解析错误，fix 只能补缺失项，请手工修正：{error}")
+        await UniMessage("\n".join(lines)).finish()
+        return
+    lines = [
+        "配置已修补，补齐了以下缺失项：",
+        *(f"  + {key}" for key in result.added_keys),
+        "",
+        f"备份：{result.backup_path}",
+        f"配置文件：{result.path}",
+        f"generation：{state.generation()}",
+    ]
+    await UniMessage("\n".join(lines)).finish()

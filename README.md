@@ -109,6 +109,8 @@ telegram_bots=[{"token": "123456:ABC-DEF"}]
     }
   },
   "render": { "theme": "default", "cards_per_row": 4 },
+  "onebot-v11-feature": { "forward-message": false },
+  "pin-channel": [],                // 渠道置顶顺序（通用，对所有适配器生效；如 ["xai", "火山"]）
   "quotanoa_additional_channel": [],  // /quotanoa 无参时在本地渠道之外追加的渠道（如 antigravity；写 all = 全部渠道）
   "cpa_additional_channel": []        // /cpa quota 无参时在全部 CPA 平台之外追加的渠道（如 qoder / workbuddy；写 all = 全部渠道）
 }
@@ -125,6 +127,8 @@ telegram_bots=[{"token": "123456:ABC-DEF"}]
 | `qoder.servers[]` | 每个 Qoder2OAPI 代理一项：`name`、`base_url`（如 `http://127.0.0.1:8000`）、`api_key`、`timeout`。多个代理的号池账号会汇总到同一张 Qoder 板，按代理名前缀区分 |
 | `refreshcache` | 各渠道查询结果的缓存秒数：`default` 为兜底，`channels` 按渠道名覆盖（支持别名如 `gpt`/`火山` 归一）。CPA 实例未命中渠道覆盖时回退到实例 `quota_cache_ttl`；`0` 表示该渠道不缓存。`/quotanoa --fresh` 仍强制重查 |
 | `render` | 额度图主题与每行卡片数（1..6），`/quotanoa theme` `/quotanoa card row` 可改 |
+| `onebot-v11-feature.forward-message` | **仅 OneBot V11 适配器**生效：`true` 时把 `/quotanoa` / `/cpa quota` 的多条额度结果（标题文字 + 图片）合并成**一条合并转发**消息发出，节点署名取 Bot 真实昵称（失败回退 Bot 号）。Telegram 等其它适配器与 `false` 时按原样逐条发送；查询过程中的「正在查询…」提示始终单独发送，不参与合并 |
+| `pin-channel` | **渠道置顶**（通用，对所有适配器生效）：数组顺序即发送顺序，**左 → 右 = 上 → 下**。命中的渠道整体前置，未命中当前查询列表的渠道自动忽略，其余渠道保持默认顺序。值支持别名（`火山`→`volcengine`、`wb`→`workbuddy`、`反重力`→`antigravity`）。例：`["xai", "火山"]` 下 `/cpa quota` 全部渠道时 xAI 在最顶部（含 xAI 的 CPA 板整块浮到本地渠道之前），`/quotanoa` 默认只查本地渠道、xai 不在列表里被忽略，火山置顶 |
 
 别名文件路径由代码（`plugins/QuotaNoa/config.py` 的 `DEFAULT_ALIASES_FILE`）决定，默认 `data/quotanoa_aliases.json`，**不写入生成的配置文件**；如需改路径，可在 JSON 里显式加可选覆盖项 `"aliases_file"`（旧配置兼容）。
 
@@ -172,6 +176,7 @@ Bot 与 CPA 不在同一台机器时，CPA 需要 `remote-management.allow-remot
 | `/quotanoa card [row <1..6>]` | 查看 / 设置每行卡片数量 |
 | `/quotanoa config show` | 查看当前生效配置（密钥脱敏）与最近解析错误 |
 | `/quotanoa config reload` | 强制从磁盘重载配置 |
+| `/quotanoa config fix` | 修补配置文件：按内置默认补齐缺失的设置项（不覆盖已有值），写回前先把旧文件备份到 `data/backup/quotanoa_config_<日期>-<时间>_bak.json`（备份目录常量在 `plugins/QuotaNoa/config.py` 的 `DEFAULT_BACKUP_DIR`）。配置已完整时不做任何写盘 |
 
 ### CPA 管理 `/cpa`
 
@@ -191,8 +196,8 @@ Bot 与 CPA 不在同一台机器时，CPA 需要 `remote-management.allow-remot
 | `cpa auth delete <实例> <查询词> --yes` | 删除磁盘凭证；无 `--yes` 只预告 |
 | `cpa codex refresh <实例> <查询词>` | 消耗 1 次 Codex 官方重置次数并刷新额度。仅 `cpa.codex_refresh_admin` |
 | `cpa login <实例> <渠道>` | 启动 OAuth / 设备码。授权完成后把浏览器回调链接发回聊天（自动归属该实例） |
-| `cpa login callback <回调链接>` | 手动提交 localhost 回调 URL |
-| `cpa login cancel` | 取消当前登录 |
+| `cpa login <实例> callback <回调链接>` | 手动提交 localhost 回调 URL |
+| `cpa login <实例> cancel` | 取消当前登录 |
 | `cpa quota [平台] [实例] [--all] [--instance <实例>] [--fresh] [--text]` | 与 `/quotanoa` 同义：默认先查**全部 CPA 平台**，再追加 `cpa_additional_channel` 里的渠道（如 `qoder` / `workbuddy`）；`--all` 查询全部渠道，`cpa quota help` 查看帮助。例：`cpa quota xai JP-AI` 只查 JP-AI 的 xAI 额度 |
 
 查询词可以是 email、文件名、label、别名或 `auth_index`（含前缀）。列表和额度图优先显示别名；未设别名时用 `渠道-短索引`，避免把邮箱发到聊天。同邮箱出现在多个渠道时用 `/quotanoa alias set antigravity user@example.com AG-1`。WorkBuddy 账号也可绑别名：`/quotanoa alias set workbuddy <uid> <别名>`。详情 `cpa auth show` 仍会列出原始字段，便于对照。
@@ -230,6 +235,8 @@ CLIProxyAPI **没有**账号池额度聚合接口。`GET /auth-files` 只有健�
 `3.44/4 (86%)` 表示：该窗口剩余当量 3.44 个满额号，4 个账号均剩 86%。1.00 = 满额一个号。
 
 默认用 Playwright 把同一平台的账号卡合并成一张图发送（视觉对齐管理台 Quota 页，不含 Refresh / 时间轴）。超过 8 个账号会拆成多张。出图函数 `render_platform_images` / `render_board_images` 不依赖聊天会话，以后做定时推送可以直接复用。
+
+开启 `onebot-v11-feature.forward-message` 且当前为 OneBot V11 会话时，上述拆出来的多条「标题 + 图」结果会再合并成**一条合并转发**发送；`pin-channel` 决定的渠道顺序在合并转发里同样生效。
 
 多实例下，账号卡标题与文字总览都会带 **`[CPA 实例名]` 前缀**（如 `[JP-AI] Murasame…`），便于区分额度来自哪个实例；实例标签限长 8 字符、账号名限长 16 字符，超长以 `…` 截断，完整名称保留在悬浮提示里。火山方舟账号为本地渠道（无 CPA 实例），不加前缀；若同时开通 Coding 与 Agent Plan，会拆分为**两张独立卡片**（Coding 卡片与 Agent 卡片），各自带有专属档位徽章（如 `Coding Lite`、`Agent Small`）与订阅到期徽章（`Coding 到期 …`、`Agent 到期 …`）。无论在账号卡片还是汇总/合计视图中，均统一以套餐名作为分组标题（Coding 在前、Agent 在后），内部额度行显示简洁的 `5h`/`周`/`月`（Agent 视用量自适应展示 `日`）；文字模式下合计行按 `Coding：`/`Agent：` 分组缩进展示。其中 Agent Plan 的日额度为视觉模型专用硬顶，无消耗时自动隐藏，产生用量后才浮现。
 
@@ -281,8 +288,8 @@ themes/<主题名>/
 
 - 机器人**不会**加 `is_webui=true`。该参数会在 CPA 本机 `51121` 起 callback，聊天场景通常不可达。
 - 授权链接 / 设备码优先私聊下发；私聊失败才回当前会话并警告。
-- 浏览器常会跳到 `localhost`。把地址栏完整回调链接发回当前聊天，或 `cpa login callback <url>`。插件会 `POST /oauth-callback`（`redirect_url`）转给 CPA。
-- Session 约 30 分钟；超时或 `cpa login cancel` 会 `DELETE /oauth-session`。
+- 浏览器常会跳到 `localhost`。把地址栏完整回调链接发回当前聊天，或 `cpa login <实例> callback <url>`。插件会 `POST /oauth-callback`（`redirect_url`）转给 CPA。
+- Session 约 30 分钟；超时或 `cpa login <实例> cancel` 会 `DELETE /oauth-session`。
 
 ## 刻意不暴露的接口
 

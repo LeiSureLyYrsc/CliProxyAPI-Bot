@@ -11,12 +11,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Mapping, Sequence
 
 from arclet.alconna import Alconna, Args, CommandMeta, MultiVar, Option, Subcommand, store_true
 from nonebot.adapters import Bot, Event
-from nonebot_plugin_alconna import Arparma, Image, Query, UniMessage, on_alconna
+from nonebot_plugin_alconna import Arparma, CustomNode, Image, Query, Text, UniMessage, on_alconna
 
 from .. import state
 from ..config import CpaConfig, ConfigError, normalize_name, valid_name, VolcengineAccount
@@ -39,6 +39,12 @@ from ..wb.provider import collect_board as collect_workbuddy_board
 from ..qoder.provider import collect_board as collect_qoder_board
 
 from .common import CPA_ADMIN, _require_one_across, _text, _without
+
+#: 合并转发目标适配器名（NoneBot OneBot V11 适配器 ``get_name()`` 返回值）。
+ONEBOT11_ADAPTER = "OneBot V11"
+
+#: bot 昵称缓存：self_id → nickname（节点署名用，避免每条消息重复请求）。
+_nickname_cache: dict[str, str] = {}
 
 #: /quotanoa all 与默认查询使用的本地渠道顺序。
 LOCAL_CHANNEL_LABELS = {"volcengine": "火山", "workbuddy": "WorkBuddy", "qoder": "Qoder"}
@@ -152,6 +158,7 @@ quota = on_alconna(
             "config",
             Subcommand("show", help_text="查看当前生效配置（密钥脱敏）"),
             Subcommand("reload", help_text="强制重载配置"),
+            Subcommand("fix", help_text="修补配置文件：补齐缺失项并备份旧文件"),
             help_text="配置查看与重载",
         ),
         Subcommand(
@@ -327,6 +334,7 @@ def _quota_help_text() -> str:
             "【配置】",
             "  /quotanoa config show     查看生效配置（密钥脱敏）与最近解析错误",
             "  /quotanoa config reload   强制从磁盘重载配置",
+            "  /quotanoa config fix      补齐缺失配置项（先备份旧文件到 data/backup/）",
             "",
             "【管理】CPA 实例 / 凭证 / 登录 / Codex 重置请用 /cpa。",
         ]
@@ -790,6 +798,106 @@ async def _instance_quota_board(instance: str, selection: QuotaSelection) -> Quo
     return board
 
 
+def _result_channels(item: QuotaBoard | str, name: str) -> list[str]:
+    """该结果条目涉及的 canonical 渠道列表。
+
+    board 取其平台名（本地渠道为单平台板、CPA 全平台板含多平台）；
+    字符串（错误/回退文字）按标签归一（如「火山」→ ``volcengine``）。
+    """
+    if isinstance(item, QuotaBoard):
+        return [section.platform for section in item.platforms]
+    canonical = normalize_channel(name)
+    return [canonical] if canonical else []
+
+
+def _apply_pin_order(
+    results: Sequence[tuple[str, QuotaBoard | str]],
+    pin_order: Sequence[str],
+) -> list[tuple[str, QuotaBoard | str]]:
+    """按 ``pin-channel`` 把命中的渠道置顶（左→右 = 上→下），其余保持原相对顺序。
+
+    两级稳定排序：先重排每个板内部的平台，再重排结果条目。含被 pin 平台的
+    CPA 板整块上浮（如 ``/cpa quota all`` 下的 xai 排在本地渠道之前），未命中
+    当前查询的 pin 渠道自动忽略。
+
+    板被 :func:`dataclasses.replace` 浅拷贝后替换平台列表，**不会原地修改**
+    ``platforms``（额度缓存里是同一个板对象）。
+    """
+    order = {channel: rank for rank, channel in enumerate(pin_order)}
+    if not order:
+        return list(results)
+    fallback = len(order)
+
+    def _board_rank(name: str, item: QuotaBoard | str) -> int:
+        return min((order.get(c, fallback) for c in _result_channels(item, name)), default=fallback)
+
+    reordered: list[tuple[str, QuotaBoard | str]] = []
+    for name, item in results:
+        if isinstance(item, QuotaBoard) and item.platforms:
+            sections = sorted(item.platforms, key=lambda s: order.get(s.platform, fallback))
+            if sections != item.platforms:
+                item = replace(item, platforms=sections)
+        reordered.append((name, item))
+    return sorted(reordered, key=lambda entry: _board_rank(entry[0], entry[1]))
+
+
+def _current_onebot_bot() -> Bot | None:
+    """当前事件上下文的 bot 是否为 OneBot V11；否则 ``None``（非 matcher 上下文同样 ``None``）。"""
+    try:
+        from nonebot.internal.matcher import current_bot
+
+        bot = current_bot.get()
+    except Exception:
+        return None
+    try:
+        if bot.adapter.get_name() == ONEBOT11_ADAPTER:
+            return bot
+    except Exception:
+        return None
+    return None
+
+
+async def _bot_nickname(bot: Bot) -> str:
+    """合并转发节点的署名：OneBot 真实昵称（失败回退 bot 号，再回退 QuotaNoa）。"""
+    cached = _nickname_cache.get(bot.self_id)
+    if cached:
+        return cached
+    nickname = ""
+    try:
+        info = await bot.get_login_info()  # type: ignore[attr-defined]
+        if isinstance(info, Mapping):
+            nickname = str(info.get("nickname") or "").strip()
+    except Exception:
+        nickname = ""
+    if nickname:
+        _nickname_cache[bot.self_id] = nickname
+        return nickname
+    return bot.self_id or "QuotaNoa"
+
+
+def _build_forward_nodes(
+    outgoing: Sequence[tuple[str, bytes | None]],
+    *,
+    uid: str,
+    nickname: str,
+) -> list[CustomNode]:
+    """把 ``(caption, png)`` 列表转为合并转发节点：文字与图片都在同一节点内容里。"""
+    nodes: list[CustomNode] = []
+    for caption, png in outgoing:
+        content: list[Any] = [Text(caption)]
+        if png is not None:
+            content.append(Image(raw=png, mimetype="image/png"))
+        nodes.append(CustomNode(uid=uid, name=nickname, content=content))
+    return nodes
+
+
+async def _send_forwarded(bot: Bot, outgoing: Sequence[tuple[str, bytes | None]]) -> None:
+    """把多条额度结果合并为一条 OneBot V11 转发消息（文字与图片都在节点内容里）。"""
+    nickname = await _bot_nickname(bot)
+    nodes = _build_forward_nodes(outgoing, uid=bot.self_id, nickname=nickname)
+    await UniMessage.reference(*nodes).finish()
+
+
 async def _send_quota_results(
     cpa: CpaConfig,
     results: list[tuple[str, QuotaBoard | str]],
@@ -798,8 +906,9 @@ async def _send_quota_results(
     multi: bool,
 ) -> None:
     prefix = multi
+    pinned = _apply_pin_order(results, state.get_snapshot().pin_channel)
     outgoing: list[tuple[str, bytes | None]] = []
-    for name, item in results:
+    for name, item in pinned:
         if isinstance(item, str):
             outgoing.append((f"[{name}] {item}" if prefix else item, None))
             continue
@@ -827,6 +936,10 @@ async def _send_quota_results(
                 outgoing.append((f"{label}{title} 额度{extra}{cache_note}", png))
     if not outgoing:
         await UniMessage("没有可展示的额度账号。").finish()
+        return
+    bot = _current_onebot_bot()
+    if bot is not None and state.get_snapshot().onebot_v11_feature.forward_message:
+        await _send_forwarded(bot, outgoing)
         return
     for caption, png in outgoing[:-1]:
         await UniMessage(caption).send()

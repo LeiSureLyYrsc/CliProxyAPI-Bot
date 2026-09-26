@@ -278,6 +278,21 @@ def update_config(patch: Mapping[str, Any]) -> ConfigSnapshot:
         return _snapshot  # type: ignore[return-value]
 
 
+def repair_config() -> config_module.RepairResult:
+    """补齐磁盘配置缺失项（先备份旧文件）。内存模式不支持，抛 ``ConfigError``。
+
+    完成后强制重载，使补入的默认值立即生效。
+    """
+    with _lock:
+        if _memory_only:
+            raise ConfigError("当前为内存配置模式，无法修补磁盘配置文件。")
+        path = config_file_path()
+        result = config_module.repair_config_file(path)
+        if result.changed:
+            _load(force=True, generate=False)
+        return result
+
+
 def invalidate_downstream() -> None:
     """仅供别名等外部改动后手动触发下游失效。"""
     with _lock:

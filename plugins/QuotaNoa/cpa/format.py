@@ -219,8 +219,9 @@ def format_models(models: list[Any]) -> str:
     return "\n".join(lines)
 
 
-def format_login_prompt(provider: str, payload: dict[str, Any]) -> str:
+def format_login_prompt(provider: str, payload: dict[str, Any], *, instance: str = "") -> str:
     url = payload.get("url") or ""
+    target = instance or "<实例>"
     lines = [f"[{provider}] 请在浏览器完成授权。"]
     if url:
         lines.append(url)
@@ -230,11 +231,12 @@ def format_login_prompt(provider: str, payload: dict[str, Any]) -> str:
             lines.append(f"设备码：{payload['user_code']}")
         if payload.get("expires_in"):
             lines.append(f"有效期约 {payload['expires_in']} 秒")
-        lines.append("完成后我会自动通知。取消：cpa login cancel")
+        lines.append("完成后我会自动通知。")
+        lines.append(f"取消登录：cpa login {target} cancel")
         return "\n".join(lines)
-    lines.append("授权完成后，把浏览器地址栏的完整回调链接发到当前聊天（localhost 也可以）。")
-    lines.append("或发送：cpa login callback <回调链接>")
-    lines.append("取消：cpa login cancel")
+    lines.append("授权完成后，把浏览器地址栏的完整回调链接直接发到当前聊天即可（localhost 也可以）。")
+    lines.append(f"也可显式提交：cpa login {target} callback <回调链接>")
+    lines.append(f"取消登录：cpa login {target} cancel")
     return "\n".join(lines)
 
 

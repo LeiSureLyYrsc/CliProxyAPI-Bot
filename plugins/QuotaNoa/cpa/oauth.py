@@ -111,7 +111,7 @@ async def start_login(bot: Bot, event: Event, instance: str, provider: str, payl
         raise CPAError("当前事件没有用户上下文，无法开始登录。")
     await cancel_local(key, notify=False)
 
-    target = await send_secret(bot, event, _login_text(provider, payload))
+    target = await send_secret(bot, event, _login_text(instance, provider, payload))
     pending = PendingLogin(key=key, state=state, provider=provider, bot=bot, instance=instance, target=target)
     pending.task = asyncio.create_task(_poll(pending), name=f"cpa-oauth-{key}")
     _pending[key] = pending
@@ -136,7 +136,7 @@ async def cancel_login(bot: Bot, event: Event) -> str:
 async def submit_callback(bot: Bot, event: Event, text: str) -> str:
     pending = _pending.get(session_key(bot, event))
     if pending is None:
-        raise CPAError("当前没有进行中的登录。请先发送 cpa login <渠道>。")
+        raise CPAError("当前没有进行中的登录。请先发送 cpa login <实例> <渠道>。")
     url = extract_oauth_callback_url(text)
     if not url:
         raise CPAError("没有从消息里解析到回调链接。请发送浏览器地址栏的完整 URL。")
@@ -156,7 +156,7 @@ async def submit_callback(bot: Bot, event: Event, text: str) -> str:
         await cancel_local(pending.key, notify=False)
         return f"[{pending.provider}] 登录成功，凭证已写入 CPA。"
     if state == "wait":
-        return f"[{pending.provider}] 回调已提交，仍在等待 CPA 完成。可继续等待或 cpa login cancel。"
+        return f"[{pending.provider}] 回调已提交，仍在等待 CPA 完成。可继续等待，或发送 cpa login {pending.instance} cancel 取消。"
     error = status.get("error") or "未知错误"
     return f"[{pending.provider}] 登录失败：{error}"
 
@@ -187,8 +187,8 @@ async def cancel_local(key: str, *, notify: bool) -> None:
             logger.opt(exception=exc).warning("CPA oauth cancel notify failed")
 
 
-def _login_text(provider: str, payload: dict[str, Any]) -> str:
-    return format_login_prompt(provider, payload)
+def _login_text(instance: str, provider: str, payload: dict[str, Any]) -> str:
+    return format_login_prompt(provider, payload, instance=instance)
 
 
 async def _poll(pending: PendingLogin) -> None:
